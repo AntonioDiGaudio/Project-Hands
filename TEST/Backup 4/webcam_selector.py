@@ -2,7 +2,7 @@ import cv2
 import subprocess
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import  messagebox
 from shared_state import get_running, set_running
 from gui_theme import (
     GUI_FONT, GUI_BG_COLOR, GUI_FG_COLOR,
@@ -151,7 +151,7 @@ def select_camera_gui():
         activebackground=GUI_HIGHLIGHT_COLOR, relief="flat",
         state=tk.DISABLED
     )
-    cancel_btn.pack(pady=10, fill='x')
+    cancel_btn.pack(pady=8, fill='x')
 
     root.after(100, search_and_show)
     root.mainloop()

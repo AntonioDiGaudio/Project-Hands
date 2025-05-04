@@ -1,0 +1,148 @@
+Funzionamento dell'Applicazione AirMouse
+
+
+## Flusso di Esecuzione
+
+1. **Avvio**: L'applicazione inizia da `main.py` che avvia la funzione principale in `app.py`
+2. **Selezione webcam**: L'utente seleziona una webcam disponibile
+3. **Impostazioni**: Si apre una finestra per configurare i parametri (sensibilità, velocità, ecc.)
+4. **Riconoscimento**: L'app rileva e traccia le mani tramite la webcam
+5. **Controllo**: I gesti delle mani vengono tradotti in azioni del mouse
+
+
+## Comunicazione tra i Moduli
+
+I moduli comunicano principalmente in due modi:
+
+1. **Chiamate dirette di metodi**: Le classi sono istanziate all'interno di `AirMouseApp` e i loro metodi vengono chiamati quando necessario
+2. **Condivisione di stato**:
+
+1. `config.py` contiene parametri accessibili da tutti i moduli
+2. `shared_state.py` gestisce lo stato di esecuzione dell'applicazione tramite un evento di threading
+
+
+
+
+
+## Ruolo di Ciascun File
+
+### 1. `main.py`
+
+- **Funzione**: Punto di ingresso dell'applicazione
+- **Responsabilità**: Avvia la funzione principale di `app.py`
+
+
+### 2. `app.py`
+
+- **Funzione**: Contiene la classe principale `AirMouseApp`
+- **Responsabilità**: Coordina tutte le altre componenti e gestisce il ciclo principale dell'applicazione
+- **Comunicazione**: Istanzia e utilizza le altre classi (`WebcamManager`, `HandTracker`, `MouseController`)
+
+
+### 3. `webcam_manager.py`
+
+- **Funzione**: Gestisce l'accesso alle webcam
+- **Responsabilità**:
+
+- Elenca le webcam disponibili
+- Mostra un'interfaccia per selezionare una webcam
+- Apre e configura la webcam selezionata
+
+
+
+- **Comunicazione**: Restituisce l'indice della webcam selezionata e l'oggetto `VideoCapture` a `app.py`
+
+
+### 4. `hand_tracker.py`
+
+- **Funzione**: Rileva e traccia le mani
+- **Responsabilità**:
+
+- Utilizza MediaPipe per rilevare le mani nel frame della webcam
+- Estrae i punti di riferimento delle mani
+- Determina quali dita sono alzate
+- Calcola distanze tra punti delle mani
+
+
+
+- **Comunicazione**: Fornisce i dati delle mani rilevate a `app.py`
+
+
+### 5. `mouse_controller.py`
+
+- **Funzione**: Controlla il mouse in base ai gesti
+- **Responsabilità**:
+
+- Muove il cursore in base alla posizione dell'indice
+- Gestisce i clic del mouse
+- Gestisce lo zoom e lo scorrimento
+
+
+
+- **Comunicazione**: Riceve i dati delle mani da `app.py` e utilizza `pyautogui` per controllare il mouse
+
+
+### 6. `gesture_recognizer.py`
+
+- **Funzione**: Riconosce gesti specifici
+- **Responsabilità**:
+
+- Identifica gesti come clic, trascinamento, zoom, scorrimento
+- Determina quando un gesto è stato eseguito
+
+
+
+- **Comunicazione**: Fornisce informazioni sui gesti riconosciuti a `mouse_controller.py`
+
+
+### 7. `settings_gui.py`
+
+- **Funzione**: Gestisce l'interfaccia delle impostazioni
+- **Responsabilità**:
+
+- Mostra controlli per modificare i parametri
+- Salva e carica le impostazioni
+- Mostra informazioni sui gesti disponibili
+
+
+
+- **Comunicazione**: Modifica i valori in `config.py` in base alle azioni dell'utente
+
+
+### 8. `config.py`
+
+- **Funzione**: Contiene le configurazioni dell'applicazione
+- **Responsabilità**: Memorizza parametri come sensibilità, velocità, soglie
+- **Comunicazione**: I suoi valori vengono letti e modificati da altri moduli
+
+
+### 9. `shared_state.py`
+
+- **Funzione**: Gestisce lo stato condiviso
+- **Responsabilità**: Mantiene lo stato di esecuzione dell'applicazione
+- **Comunicazione**: Fornisce funzioni `get_running()` e `set_running()` per controllare lo stato
+
+
+### 10. `gui_theme.py`
+
+- **Funzione**: Definisce il tema dell'interfaccia
+- **Responsabilità**: Contiene costanti per colori, font e stili
+- **Comunicazione**: I suoi valori vengono utilizzati da `webcam_manager.py` e `settings_gui.py`
+
+
+## Esempio di Flusso di Dati
+
+Ecco un esempio di come i dati fluiscono attraverso l'applicazione:
+
+1. `app.py` ottiene un frame dalla webcam tramite `webcam_manager.py`
+2. Il frame viene passato a `hand_tracker.py` per rilevare le mani
+3. I dati delle mani vengono analizzati in `app.py`
+4. Se viene rilevato un gesto, `app.py` chiama i metodi appropriati di `mouse_controller.py`
+5. `mouse_controller.py` esegue l'azione corrispondente (muovere il cursore, fare clic, ecc.)
+
+
+## Gestione degli Eventi
+
+- **Chiusura dell'applicazione**: Quando l'utente preme ESC o chiude una finestra, `set_running(False)` viene chiamato in `shared_state.py`
+- **Modifica delle impostazioni**: Quando l'utente modifica un'impostazione, il valore corrispondente in `config.py` viene aggiornato
+- **Rilevamento dei gesti**: Quando viene rilevato un gesto, viene eseguita l'azione corrispondente tramite `mouse_controller.py`
