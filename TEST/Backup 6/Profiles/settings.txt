@@ -1,9 +1,9 @@
-alpha_smooth = 0.3
-overscan_x = 1.6
-overscan_y = 1.6
+alpha_smooth = 0.35000000000000003
+overscan_x = 2.0
+overscan_y = 2.0
 click_cooldown = 0.1
 click_distance_threshold = 25.0
 cursor_speed_multiplier = 1.0
-zoom_threshold = 40.0
+zoom_threshold = 10.0
 slide_threshold = 0.2
 zoom_max_distance = 160.0

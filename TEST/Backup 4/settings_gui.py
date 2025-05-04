@@ -1,13 +1,11 @@
-#import sys
 import tkinter as tk
 from tkinter import ttk
 import config
 import os
-from shared_state import set_running, get_running
+from shared_state import set_running
 from gui_theme import (
-    GUI_FONT, GUI_FONT_BOLD, GUI_BG_COLOR, GUI_FG_COLOR,
-    GUI_BUTTON_BG, GUI_BUTTON_FG, GUI_HIGHLIGHT_COLOR,
-    GUI_WINDOW_SIZE
+    GUI_FONT,GUI_BG_COLOR, GUI_FG_COLOR,
+    GUI_BUTTON_BG, GUI_BUTTON_FG, GUI_HIGHLIGHT_COLOR
 )
 
 
@@ -18,6 +16,16 @@ from gui_theme import (
 PROFILE_PATH = "Profiles/settings.txt"
 
 
+def update_zoom_threshold(val):
+    config.zoom_threshold = float(val)
+
+def update_slide_threshold(val):
+    config.slide_threshold = float(val) / 10  # Mappato da 1-10 a 0.1-1.0
+
+def update_zoom_max_distance(val):
+    config.zoom_max_distance = float(val) * 20  # Mappato da 1-10 a 20-200
+
+
 def save_settings():
     with open("Profiles/settings.txt", "w") as f:
         f.write(f"alpha_smooth = {config.alpha_smooth}\n")
@@ -26,6 +34,9 @@ def save_settings():
         f.write(f"click_cooldown = {config.click_cooldown}\n")
         f.write(f"click_distance_threshold = {config.click_distance_threshold}\n")
         f.write(f"cursor_speed_multiplier = {config.cursor_speed_multiplier}\n")
+        f.write(f"zoom_threshold = {config.zoom_threshold}\n")
+        f.write(f"slide_threshold = {config.slide_threshold}\n")
+        f.write(f"zoom_max_distance = {config.zoom_max_distance}\n")
         
 
 def load_settings(sliders):
@@ -35,6 +46,9 @@ overscan_y = 1.6
 click_cooldown = 0.1
 click_distance_threshold = 25
 cursor_speed_multiplier = 1.0
+zoom_threshold = 40
+slide_threshold = 0.2
+zoom_max_distance = 160
 """
 
     # Assicurati che la cartella Profiles esista
@@ -72,13 +86,25 @@ cursor_speed_multiplier = 1.0
             'click_cooldown': 0.1,
             'click_distance_threshold': 25,
             'cursor_speed_multiplier': 1.0,
-        }
+            'zoom_threshold' : 40,
+            'slide_threshold' : 0.2,
+            'zoom_max_distance' : 160
+                    }
         update_sensitivity(default_values['alpha_smooth'])
         update_overscan_x(default_values['overscan_x'])
         update_overscan_y(default_values['overscan_y'])
         update_click_cooldown(default_values['click_cooldown'])
         update_click_threshold(default_values['click_distance_threshold'])
         update_speed(default_values['cursor_speed_multiplier'])
+        update_zoom_threshold(default_values['zoom_threshold'])
+        update_slide_threshold(default_values['slide_threshold'])
+        update_zoom_max_distance(default_values['zoom_max_distance'])
+
+
+
+
+
+
 
     # Carica i parametri dal file settings.txt
     with open(PROFILE_PATH, "r") as f:
@@ -91,6 +117,9 @@ cursor_speed_multiplier = 1.0
     config.click_cooldown = float(values.get("click_cooldown", 0.1))
     config.click_distance_threshold = float(values.get("click_distance_threshold", 25))
     config.cursor_speed_multiplier = float(values.get("cursor_speed_multiplier", 1.0))
+    config.zoom_threshold = float(values.get("zoom_threshold", 40))
+    config.slide_threshold = float(values.get("slide_threshold", 0.2))
+    config.zoom_max_distance = float(values.get("zoom_max_distance", 160))
 
     # Aggiorna la GUI per riflettere i nuovi valori
     sliders['alpha_smooth'].set(int(round(config.alpha_smooth / 0.05)))
@@ -99,6 +128,9 @@ cursor_speed_multiplier = 1.0
     sliders['overscan_y'].set(int(round(config.overscan_y)))
     sliders['click_distance_threshold'].set(int(round(config.click_distance_threshold / 25)))
     sliders['click_cooldown'].set(int(round(config.click_cooldown / 0.05)))
+    sliders['zoom_threshold'].set(int(round(config.zoom_threshold)))
+    sliders['slide_threshold'].set(int(round(config.slide_threshold * 10)))  # Mappato da 0.1-1.0 a 1-10
+    sliders['zoom_max_distance'].set(int(round(config.zoom_max_distance / 20)))  # Mappato da 20-200 a 1-10
 
     print("Impostazioni caricate.")
 
@@ -124,36 +156,71 @@ def update_click_cooldown(val):
 def update_speed(val):
     config.cursor_speed_multiplier = float(val)
 
-from gui_theme import (
-    GUI_FONT, GUI_FONT_BOLD, GUI_BG_COLOR, GUI_FG_COLOR,
-    GUI_BUTTON_BG, GUI_BUTTON_FG, GUI_HIGHLIGHT_COLOR,
-    GUI_WINDOW_SIZE
-)
-
 def create_settings_gui():
     global running
     root = tk.Tk()
     root.title("AirMouse")
-    root.geometry("700x850")
+    root.geometry("500x300")  # Dimensioni più ragionevoli
     root.configure(bg=GUI_BG_COLOR)
     root.resizable(False, False)
 
-    frm = tk.Frame(root, bg=GUI_BG_COLOR, padx=10, pady=10)
-    frm.pack(fill='both', expand=True)
+    # Creazione del contenitore principale con scrollbar
+    main_frame = tk.Frame(root, bg=GUI_BG_COLOR)
+    main_frame.pack(fill='both', expand=True)
+
+    # Creazione della canvas e scrollbar
+    canvas = tk.Canvas(main_frame, bg=GUI_BG_COLOR, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+    
+    # Frame che conterrà tutti i widget (scrollabile)
+    scrollable_frame = tk.Frame(canvas, bg=GUI_BG_COLOR)
+
+    # Configurazione della canvas
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(
+            scrollregion=canvas.bbox("all")
+        )
+    )
+
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="n")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    # Layout della canvas e scrollbar
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    # Abilitazione dello scrolling con la rotellina del mouse
+    def _on_mousewheel(event):
+        canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+    canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+    # Frame centrale per contenere tutti i widget
+    center_frame = tk.Frame(scrollable_frame, bg=GUI_BG_COLOR)
+    center_frame.pack(expand=True, fill='both', padx=20)
+
+    frm = center_frame
+    frm.configure(padx=10, pady=10)
 
     sliders = {}
 
     def make_label(text):
-        tk.Label(frm, text=text, bg=GUI_BG_COLOR, fg=GUI_FG_COLOR, font=GUI_FONT).pack(pady=(10, 0))
+        tk.Label(frm, text=text, bg=GUI_BG_COLOR, fg=GUI_FG_COLOR, 
+                font=GUI_FONT).pack(pady=(10, 0), anchor='center')
 
     def make_scale(name, from_, to, tick, command):
+        frame = tk.Frame(frm, bg=GUI_BG_COLOR)
+        frame.pack(fill='x', pady=(0, 10), expand=True)
+        
         sliders[name] = tk.Scale(
-            frm, from_=from_, to=to, orient='horizontal', tickinterval=tick,
+            frame, from_=from_, to=to, orient='horizontal', tickinterval=tick,
             command=command, bg=GUI_BG_COLOR, fg=GUI_FG_COLOR, font=GUI_FONT,
             highlightbackground=GUI_BG_COLOR, troughcolor=GUI_BUTTON_BG
         )
-        sliders[name].pack(fill='x', pady=(0, 10))
+        sliders[name].pack(fill='x', expand=True)
 
+    # Resto del codice rimane uguale...
     make_label("Sensibilità cursore (1-10)")
     make_scale('alpha_smooth', 1, 10, 1, lambda v: update_sensitivity(float(v) * 0.05))
 
@@ -172,6 +239,15 @@ def create_settings_gui():
     make_label("Cooldown click (1-10)")
     make_scale('click_cooldown', 1, 10, 1, lambda v: update_click_cooldown(float(v) * 0.05))
 
+    make_label("Soglia zoom (1-10)")
+    make_scale('zoom_threshold', 1, 10, 1, lambda v: update_zoom_threshold(float(v)))
+
+    make_label("Soglia slide (1-10)")
+    make_scale('slide_threshold', 1, 10, 1, lambda v: update_slide_threshold(float(v)))
+
+    make_label("Distanza massima zoom (1-10)")
+    make_scale('zoom_max_distance', 1, 10, 1, lambda v: update_zoom_max_distance(float(v)))
+
     load_settings(sliders)
 
     def reset_values():
@@ -182,6 +258,9 @@ def create_settings_gui():
             'click_cooldown': 0.1,
             'click_distance_threshold': 25,
             'cursor_speed_multiplier': 1.0,
+            'zoom_threshold': 40,
+            'slide_threshold': 0.2,
+            'zoom_max_distance': 160,
         }
         update_sensitivity(default_values['alpha_smooth'])
         update_overscan_x(default_values['overscan_x'])
@@ -189,6 +268,9 @@ def create_settings_gui():
         update_click_cooldown(default_values['click_cooldown'])
         update_click_threshold(default_values['click_distance_threshold'])
         update_speed(default_values['cursor_speed_multiplier'])
+        update_zoom_threshold(default_values['zoom_threshold'])
+        update_slide_threshold(default_values['slide_threshold'] * 10)  # Mappato da 0.2 a 2 (1-10 scale)
+        update_zoom_max_distance(default_values['zoom_max_distance'] / 20)  # Mappato da 160 a 8 (1-10 scale)
 
         sliders['alpha_smooth'].set(int(round(default_values['alpha_smooth'] / 0.05)))
         sliders['cursor_speed_multiplier'].set(int(round(default_values['cursor_speed_multiplier'])))
@@ -196,11 +278,14 @@ def create_settings_gui():
         sliders['overscan_y'].set(int(round(default_values['overscan_y'])))
         sliders['click_cooldown'].set(int(round(default_values['click_cooldown'] / 0.05)))
         sliders['click_distance_threshold'].set(int(round(default_values['click_distance_threshold'] / 25)))
+        sliders['zoom_threshold'].set(int(round(default_values['zoom_threshold'])))
+        sliders['slide_threshold'].set(int(round(default_values['slide_threshold'] * 10)))
+        sliders['zoom_max_distance'].set(int(round(default_values['zoom_max_distance'] / 20)))
 
     # Bottone Reset
     tk.Button(frm, text="Reset", command=reset_values,
               bg=GUI_BUTTON_BG, fg=GUI_BUTTON_FG, font=GUI_FONT,
-              activebackground=GUI_HIGHLIGHT_COLOR, relief="flat").pack(pady=10, fill='x')
+              activebackground=GUI_HIGHLIGHT_COLOR, relief="flat").pack(pady=10, fill='x', padx=100)
 
     # Bottoni Salva e Carica
     btn_frame = tk.Frame(frm, bg=GUI_BG_COLOR)
@@ -214,7 +299,7 @@ def create_settings_gui():
               bg=GUI_BUTTON_BG, fg=GUI_BUTTON_FG, font=GUI_FONT,
               activebackground=GUI_HIGHLIGHT_COLOR, relief="flat").pack(side='left', padx=10, expand=True, fill='x')
     
-        # Bottone Info con popup
+    # Bottone Info con popup
     def show_info_popup():
         info_win = tk.Toplevel(root)
         info_win.title("Istruzioni gesture")
@@ -242,10 +327,8 @@ def create_settings_gui():
     # Bottone per aprire popup info
     tk.Button(frm, text="ℹ Info gesture", command=show_info_popup,
               bg=GUI_BUTTON_BG, fg=GUI_BUTTON_FG, font=GUI_FONT,
-              activebackground=GUI_HIGHLIGHT_COLOR, relief="flat").pack(pady=10, fill='x')
+              activebackground=GUI_HIGHLIGHT_COLOR, relief="flat").pack(pady=10, fill='x', padx=100)
 
-
-   
     def on_close():
         set_running(False)
         root.quit()

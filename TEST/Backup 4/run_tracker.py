@@ -5,7 +5,6 @@ import numpy as np
 import pyautogui
 import time
 import threading
-import math
 import config
 from settings_gui import create_settings_gui
 from webcam_selector import select_camera_gui
@@ -35,23 +34,28 @@ drag_mode_enabled = True
 enable_right_click = True
 
 mp_hands = mp.solutions.hands
-mp_draw = mp.solutions.drawing_utils
+#mp_draw = mp.solutions.drawing_utils # Commenta per tolgire ill disegno della mano
 # Modificato per rilevare entrambe le mani
 hands = mp_hands.Hands(
     static_image_mode=False,
     max_num_hands=2,  #2 mani
     model_complexity=0,
-    min_detection_confidence=0.6,
-    min_tracking_confidence=0.6
+    min_detection_confidence=0.8,
+    min_tracking_confidence=0.8
 )
+
+
+def distance_between_points(p1, p2):
+    return np.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
+
 
 # Apertura della webcam selezionata
 cap = cv2.VideoCapture(selected_cam)
 if not cap.isOpened():
     raise SystemExit("Impossibile aprire la webcam selezionata")
 
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 160)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 120)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
 # Parametri del filtro di Kalman
 xk = np.array([screen_w / 2, screen_h / 2, 0, 0], dtype=np.float32)
@@ -68,55 +72,34 @@ right_click_cooldown = 0.0
 last_click_time = 0.0
 
 # Parametri per lo zoom
-zoom_scale = 0.6
+zoom_scale = 0.5
 last_zoom_distance = None
-zoom_sensitivity = 5 # Aumenta la sensibilità dello zoom
-zoom_cooldown = 0.0      # Cooldown per lo zoom
-zoom_cooldown_time = 0.5 # Riduci il cooldown per lo zoom
-zoom_threshold = 40       # Riduci la soglia per un cambiamento significativo
-zoom_distances = []      # Lista per lo smoothing delle distanze
-zoom_smooth_factor = 5   # Numero di campioni per lo smoothing
-zoom_mode_active = True # Flag per attivare/disattivare la modalità zoom
-zoom_max_distance = 160 
+
+zoom_sensitivity = 5
+zoom_cooldown = 0.0
+zoom_cooldown_time = 0.5
+zoom_distances = []
+zoom_smooth_factor = 5
+zoom_mode_active = True
 
 
 # Parametri per lo slide
-slide_cooldown = 0.0
-slide_cooldown_time = 0.4  # Tempo di cooldown in secondi
-slide_threshold = 0.2      # Soglia per il riconoscimento dello slide 
+slide_cooldown = 0.2
+slide_cooldown_time = 0
 
 # Funzione per determinare quali dita sono alzate
 def fingers_up(landmarks):
-    fingers = []
-    # Indice
-    if landmarks[8][1] < landmarks[6][1]:
-        fingers.append(1)
-    else:
-        fingers.append(0)
-    
-    # Medio
-    if landmarks[12][1] < landmarks[10][1]:
-        fingers.append(1)
-    else:
-        fingers.append(0)
-    
-    # Anulare
-    if landmarks[16][1] < landmarks[14][1]:
-        fingers.append(1)
-    else:
-        fingers.append(0)
-    
-    # Mignolo
-    if landmarks[20][1] < landmarks[18][1]:
-        fingers.append(1)
-    else:
-        fingers.append(0)
-    
-    return fingers
+    return [
+        int(landmarks[8][1] < landmarks[6][1]),   # Indice
+        int(landmarks[12][1] < landmarks[10][1]), # Medio
+        int(landmarks[16][1] < landmarks[14][1]), # Anulare
+        int(landmarks[20][1] < landmarks[18][1])  # Mignolo
+    ]
+
 
 # Funzione per calcolare la distanza tra due punti
 def distance(p1, p2):
-    return math.hypot(p2[0]-p1[0], p2[1]-p1[1])
+    return np.linalg.norm(np.array(p1) - np.array(p2))
 
 
 # Funzione per determinare l'orientamento della mano
@@ -131,15 +114,15 @@ def get_hand_orientation(landmarks, frame_width, frame_height):
     # Determina l'orientamento in base alla posizione normalizzata
     if abs(norm_x) > abs(norm_y):
         # Movimento orizzontale predominante
-        if norm_x < -slide_threshold:
+        if norm_x < config.slide_threshold:
             return "left"
-        elif norm_x > slide_threshold:
+        elif norm_x > config.slide_threshold:
             return "right"
     else:
         # Movimento verticale predominante
-        if norm_y < -slide_threshold:
+        if norm_y < config.slide_threshold:
             return "up"
-        elif norm_y > slide_threshold:
+        elif norm_y > config.slide_threshold:
             return "down"
     
     # Se non supera la soglia in nessuna direzione
@@ -159,9 +142,8 @@ def perform_slide(direction):
 
 # Funzione per calcolare la media delle distanze per lo smoothing
 def smooth_distance(distances):
-    if not distances:
-        return 0
-    return sum(distances) / len(distances)
+    return np.mean(distances) if distances else 0
+
 
 # Funzione per verificare se entrambi gli indici sono alzati (per attivare lo zoom)
 
@@ -174,11 +156,15 @@ def check_zoom_gesture(right_fingers, left_fingers):
 while get_running():
     
     ret, frame = cap.read()
+    #time.sleep(0.02) #max fps 50
+    #time.sleep(0.01) #max fps 100
     if not ret:
         continue
 
     frame = cv2.flip(frame, 1)
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    #frame = cv2.GaussianBlur(frame, (3, 3), 0)
+
     result = hands.process(rgb)
 
     h, w, _ = frame.shape
@@ -196,7 +182,7 @@ while get_running():
             hand_label = hand_info.classification[0].label
             
             # Disegna i landmark della mano
-            mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            #mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS) # Commenta per tolgire ill disegno della mano
             
             # Estrai i punti della mano
             points = [(int(lm.x * w), int(lm.y * h)) for lm in hand_landmarks.landmark]
@@ -228,7 +214,8 @@ while get_running():
             px, py = right_hand_points[4]  # Pollice
 
             # Mappatura schermo con sensibilità e velocità in tempo reale
-            ix_centered = (ix - w / 2) * config.overscan_x + w / 2
+            half_w, half_h = w / 2, h / 2
+            ix_centered = (ix - half_w) * config.overscan_x + half_w
             iy_centered = (iy - h / 2) * config.overscan_y + h / 2
             ix_clipped = np.clip(ix_centered, 0, w - 1)
             iy_clipped = np.clip(iy_centered, 0, h - 1)
@@ -238,21 +225,39 @@ while get_running():
 
             dist = distance((ix, iy), (px, py))
 
+            
+
+            # Gestione del click - SOLO PER LA MANO DESTRA
             smooth_x += config.alpha_smooth * (zx - smooth_x)
+
             smooth_y += config.alpha_smooth * (zy - smooth_y)
+
+
 
             pyautogui.moveTo(int(smooth_x), int(smooth_y), _pause=False)
 
+
+
             # Gestione del click - SOLO PER LA MANO DESTRA
+
             if dist < config.click_distance_threshold:
+
                 if drag_mode_enabled:
+
                     if not click_held and time.time() - last_click_time >= config.click_cooldown:
+
                         pyautogui.mouseDown()
+
                         click_held = True
+
                         last_click_time = time.time()
+
                 else:
+
                     if time.time() - last_click_time >= config.click_cooldown:
+
                         pyautogui.click()
+
                         last_click_time = time.time()
             else:
                 if click_held:
@@ -353,13 +358,13 @@ while get_running():
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
             
             # Applica lo zoom SOLO se la gesture è attiva e la distanza è inferiore alla soglia massima
-            if zoom_gesture_active and smoothed_distance < zoom_max_distance:
+            if zoom_gesture_active and smoothed_distance < config.zoom_max_distance:
                 if last_zoom_distance is not None and time.time() - zoom_cooldown >= zoom_cooldown_time:
                     # Calcola la differenza di distanza
                     zoom_diff = smoothed_distance - last_zoom_distance
                     
                     # Applica lo zoom solo se la differenza è significativa
-                    if abs(zoom_diff) > zoom_threshold:
+                    if abs(zoom_diff) > config.zoom_threshold:
                         # Zoom in (allontanamento delle dita)
                         if zoom_diff > 0:
                             pyautogui.keyDown('ctrl')
@@ -394,7 +399,7 @@ while get_running():
             pyautogui.mouseUp()
             click_held = False
 
-    #cv2.imshow("Hand Mouse Control", frame) #Commenta questa riga per evitare il Bud dei thread
+    cv2.imshow("Hand Mouse Control", frame) #Commenta questa riga per evitare il Bud dei thread
     # Controllo chiusura con ESC (opzionale)
     key = cv2.waitKey(1)
     if key == 27:  # ESC key
