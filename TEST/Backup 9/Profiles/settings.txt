@@ -1,0 +1,17 @@
+alpha_smooth = 0.30000000000000004
+overscan_x = 2.0
+overscan_y = 2.0
+click_cooldown = 0.2
+click_distance_threshold = 250.0
+cursor_speed_multiplier = 6.0
+zoom_threshold = 1.0
+zoom_cooldown_time = 10.0
+zoom_smooth_factor = 4.0
+slide_cooldown_time = 100
+zoom_max_distance = 80.0
+use_hardware_acceleration = 0
+camera_width = 320
+camera_height = 240
+model_complexity = 1
+min_detection_confidence = 0.9
+min_tracking_confidence = 0.9
