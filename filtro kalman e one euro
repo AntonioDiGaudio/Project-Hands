@@ -1,0 +1,29 @@
+One eur:
+-È un filtro adattivo e non predittivo
+-Fa smoothing in base alla velocità del movimento
+-riduce jitter e tremolio dei movimenti lenti, senza ritardare quelli veloci.
+
+Valori one_eur:
+freq 			# Sarebbero gli fps
+min_cutoff		# Piu alto= piu reattivo
+beta			# Piu alto = piu adattivo ai movimenti rapidi
+d_cutoff 		# cutoff per derrivata, si stima la velocita(derivata).
+			 Si applica un filtro passa basso a questa derivata, 
+			 per evitare che rumori istantanei la falsino
+        
+
+Kalman:
+-È un filtro statistico predittivo
+-Usa lo stato precedente + modello fisico per prevedere dove sarà il cursore
+-Aggiorna lo stato confrontando la predizione con la misura attuale
+-Stabilizza la traiettoria e predice piccoli salti o frame persi.
+
+
+
+Funzionamento:
+filtro one ur fa smoothing e passa il risultato a kalman.
+One Euro ripulisce il segnale dai jitter (in particolare quando la mano è ferma o si muove lentamente).Kalman prende quel segnale già ripulito e lo predice (anche se perdi un frame o hai un picco improvviso).Lo stabilizza su traiettorie continue e coerenti.
+Quindi:
+1)Prevede dove si troverà il cursore al prossimo istante (usando il modello di moto lineare),
+2)Corregge quella previsione con la “misura” (il target calcolato dal One Euro Filter),
+3)Ti restituisce uno spostamento ancora più stabile, ma sempre reattivo ai cambiamenti.
