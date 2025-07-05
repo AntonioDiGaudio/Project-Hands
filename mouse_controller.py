@@ -95,6 +95,7 @@ class MouseController:
         self.zoom_distances = []
         self.click_start_time = 0.0
         self.click_detection_active = False
+        self.release_counter = 0
 
 
         
@@ -156,6 +157,7 @@ class MouseController:
         
         # Gestione del clic sinistro
         if dist < self.config.click_distance_threshold:
+            self.release_counter = 0
             # Se non siamo già in modalità click, registra l'inizio del click
             if not self.click_detection_active:
                 self.click_detection_active = True
@@ -166,22 +168,25 @@ class MouseController:
                 self.click_held = True
                 click_performed = True
         else:
-            # Se eravamo in modalità click ma ora non lo siamo più
-            if self.click_detection_active:
-                # Se eravamo in drag mode, rilascia il mouse
-                if self.click_held:
-                    pyautogui.mouseUp()
-                    self.click_held = False
-                # Altrimenti, se il tempo di attesa è stato breve, è un click normale
-                elif (current_time - self.click_start_time) < 0.3:
-                    # Verifica se è passato abbastanza tempo dall'ultimo click
-                    if current_time - self.last_click_time >= self.config.click_cooldown:
-                        pyautogui.click()
-                        self.last_click_time = current_time
-                        click_performed = True
-            
-            # Reset dello stato di rilevamento click
-            self.click_detection_active = False
+            self.release_counter += 1
+            if self.release_counter >= self.config.drag_release_frames:
+                # Se eravamo in modalità click ma ora non lo siamo più
+                if self.click_detection_active:
+                    # Se eravamo in drag mode, rilascia il mouse
+                    if self.click_held:
+                        pyautogui.mouseUp()
+                        self.click_held = False
+                    # Altrimenti, se il tempo di attesa è stato breve, è un click normale
+                    elif (current_time - self.click_start_time) < 0.3:
+                        # Verifica se è passato abbastanza tempo dall'ultimo click
+                        if current_time - self.last_click_time >= self.config.click_cooldown:
+                            pyautogui.click()
+                            self.last_click_time = current_time
+                            click_performed = True
+
+                # Reset dello stato di rilevamento click
+                self.click_detection_active = False
+                self.release_counter = 0
         
         # Gestione del clic destro
         if enable_right_click and not pinky_up and time.time() - self.right_click_cooldown >= 1.0:
