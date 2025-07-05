@@ -173,6 +173,8 @@ class MouseController:
                 self.release_counter += 1
             else:
                 self.release_counter = 0
+            self.release_counter += 1
+
             if self.release_counter >= self.config.drag_release_frames:
                 # Se eravamo in modalità click ma ora non lo siamo più
                 if self.click_detection_active:
