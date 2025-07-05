@@ -159,7 +159,7 @@ class AirMouseApp:
                 
                 # Gestione del click
                 dist = self.hand_tracker.distance_between_points((ix, iy), (px, py))
-                self.mouse_controller.handle_click(dist, self.drag_mode_enabled, self.enable_right_click, pinky_up, ring_up)
+                self.mouse_controller.handle_click(dist, self.drag_mode_enabled, self.enable_right_click, pinky_up)
             
             # Gestione della mano sinistra (zoom e slide)
             if left_hand_points and left_finger_state:
