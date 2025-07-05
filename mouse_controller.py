@@ -168,7 +168,11 @@ class MouseController:
                 self.click_held = True
                 click_performed = True
         else:
-            self.release_counter += 1
+            release_threshold = self.config.click_distance_threshold * self.config.drag_release_multiplier
+            if dist >= release_threshold:
+                self.release_counter += 1
+            else:
+                self.release_counter = 0
             if self.release_counter >= self.config.drag_release_frames:
                 # Se eravamo in modalità click ma ora non lo siamo più
                 if self.click_detection_active:

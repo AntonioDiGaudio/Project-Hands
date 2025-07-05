@@ -35,3 +35,4 @@ min_tracking_confidence = 0.8  # Confidenza minima per il tracciamento delle man
 deadzone_threshold = 5 # Zona morta, con cui si considera il movimento del mouse come nullo
 target_fps = 15
 drag_release_frames = 3  # Numero di fotogrammi consecutivi oltre la soglia per rilasciare il drag
+drag_release_multiplier = 1.5  # Moltiplicatore della soglia per riconoscere il rilascio del drag
