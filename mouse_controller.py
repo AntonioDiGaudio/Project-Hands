@@ -95,6 +95,7 @@ class MouseController:
         self.zoom_distances = []
         self.click_start_time = 0.0
         self.click_detection_active = False
+        self.ring_hold = False
 
 
         
@@ -138,7 +139,7 @@ class MouseController:
 
         
     
-    def handle_click(self, dist, drag_mode_enabled=True, enable_right_click=True, pinky_up=True):
+    def handle_click(self, dist, drag_mode_enabled=True, enable_right_click=True, pinky_up=True, ring_up=True):
         """
         Gestisce i clic del mouse in base alla distanza tra indice e pollice.
         
@@ -153,6 +154,16 @@ class MouseController:
         """
         click_performed = False
         current_time = time.time()
+
+        # Gestione dello stato dell'anulare per avviare il drag al rilascio
+        if not ring_up:
+            self.ring_hold = True
+        else:
+            if self.ring_hold and self.click_detection_active and not self.click_held and dist < self.config.click_distance_threshold:
+                pyautogui.mouseDown()
+                self.click_held = True
+                click_performed = True
+            self.ring_hold = False
         
         # Gestione del clic sinistro
         if dist < self.config.click_distance_threshold:
