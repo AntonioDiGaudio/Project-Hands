@@ -24,6 +24,7 @@ Durante l'esecuzione è possibile modificare alcune impostazioni (come risoluzio
 
 Per eseguire trascinamenti più precisi è ora possibile tenere abbassato l'anulare destro per bloccare il cursore e, mantenendo indice e pollice uniti, rilasciare l'anulare per avviare il drag in modo affidabile. Se l'anulare rimane premuto, l'operazione di trascinamento non parte fino al suo rilascio, evitando doppi clic indesiderati.
 
+
 ## Configurazione
 I parametri principali possono essere modificati nel file `config.py` oppure tramite il file `Profiles/settings.txt` generato dopo il primo avvio. Questi valori controllano sensibilità del cursore, overscan, soglie per click e zoom e altre preferenze.
 
