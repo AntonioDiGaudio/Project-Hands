@@ -237,7 +237,8 @@ class SettingsGUI:
         # Crea il file settings.txt se non esiste
         if not os.path.isfile(PROFILE_PATH):
             with open(PROFILE_PATH, "w") as f:
-                f.write(default_settings)
+                for key, value in default_settings.items():
+                    f.write(f"{key} = {value}\n")
             print("File 'settings.txt' creato con valori predefiniti.")
         
         try:
