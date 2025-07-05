@@ -40,6 +40,15 @@ class AirMouseApp:
         self.cap = None
         self.gesture_recognizer = GestureRecognizer(config)
 
+        # Salva le impostazioni correnti per rilevare eventuali modifiche "live"
+        self.current_camera_resolution = (config.camera_width, config.camera_height)
+        self.current_hand_params = (
+            config.model_complexity,
+            config.min_detection_confidence,
+            config.min_tracking_confidence,
+            config.use_hardware_acceleration,
+        )
+
 
         
 
@@ -63,6 +72,7 @@ class AirMouseApp:
             
             # Apertura della webcam selezionata
             self.cap = self.webcam_manager.open_camera(selected_cam)
+            self.current_camera_resolution = (config.camera_width, config.camera_height)
             
             return True
         except Exception as e:
@@ -83,6 +93,9 @@ class AirMouseApp:
         # Ciclo principale per il riconoscimento della mano e il movimento del cursore
         while get_running():
             current_time = time.time()
+
+            # Verifica se qualche parametro di configurazione è cambiato
+            self.check_config_updates()
 
             #frame_skipping
             frame_counter += 1
@@ -146,7 +159,7 @@ class AirMouseApp:
                 
                 # Gestione del click
                 dist = self.hand_tracker.distance_between_points((ix, iy), (px, py))
-                self.mouse_controller.handle_click(dist, self.drag_mode_enabled, self.enable_right_click, pinky_up)
+                self.mouse_controller.handle_click(dist, self.drag_mode_enabled, self.enable_right_click, pinky_up, ring_up)
             
             # Gestione della mano sinistra (zoom e slide)
             if left_hand_points and left_finger_state:
@@ -274,6 +287,46 @@ class AirMouseApp:
             
             if not get_running():
                 break
+
+    def check_config_updates(self):
+        """Ricarica camera o tracker se i parametri sono cambiati."""
+        # Controllo risoluzione webcam
+        current_res = (config.camera_width, config.camera_height)
+        if current_res != self.current_camera_resolution:
+            self.reload_camera()
+            self.current_camera_resolution = current_res
+
+        # Controllo parametri HandTracker
+        current_hand = (
+            config.model_complexity,
+            config.min_detection_confidence,
+            config.min_tracking_confidence,
+            config.use_hardware_acceleration,
+        )
+        if current_hand != self.current_hand_params:
+            self.reload_hand_tracker()
+            self.current_hand_params = current_hand
+
+    def reload_camera(self):
+        """Riapre la webcam con la nuova risoluzione."""
+        try:
+            self.webcam_manager.release_camera()
+            self.cap = self.webcam_manager.open_camera(self.webcam_manager.selected_camera)
+            self.current_camera_resolution = (config.camera_width, config.camera_height)
+        except Exception as e:
+            print(f"Errore riapertura camera: {e}")
+
+    def reload_hand_tracker(self):
+        """Ricrea l'oggetto HandTracker con le impostazioni attuali."""
+        try:
+            self.hand_tracker.hands.close()
+        except Exception:
+            pass
+        self.hand_tracker = HandTracker(
+            model_complexity=config.model_complexity,
+            min_detection_confidence=config.min_detection_confidence,
+            min_tracking_confidence=config.min_tracking_confidence,
+        )
     
     def terminate(self):
         """Chiude l'applicazione e rilascia le risorse."""
