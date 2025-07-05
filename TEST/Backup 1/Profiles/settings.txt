@@ -1,6 +1,0 @@
-alpha_smooth = 0.30000000000000004
-overscan_x = 2.0
-overscan_y = 2.0
-click_cooldown = 0.2
-click_distance_threshold = 25.0
-cursor_speed_multiplier = 1.0
