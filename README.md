@@ -20,6 +20,10 @@ python main.py
 ```
 Alla prima esecuzione viene chiesta la selezione della webcam e vengono mostrate le impostazioni principali in una finestra dedicata.
 
+Durante l'esecuzione è possibile modificare alcune impostazioni (come risoluzione della camera e complessità del modello) tramite la finestra delle impostazioni. Il programma rileva le variazioni e aggiorna automaticamente la webcam e il tracker senza bisogno di riavviare l'applicazione.
+
+Per eseguire trascinamenti più precisi è ora possibile tenere abbassato l'anulare destro per bloccare il cursore e, mantenendo indice e pollice uniti, rilasciare l'anulare per avviare il drag in modo affidabile.
+
 ## Configurazione
 I parametri principali possono essere modificati nel file `config.py` oppure tramite il file `Profiles/settings.txt` generato dopo il primo avvio. Questi valori controllano sensibilità del cursore, overscan, soglie per click e zoom e altre preferenze.
 
