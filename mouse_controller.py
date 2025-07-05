@@ -172,7 +172,7 @@ class MouseController:
                 self.click_detection_active = True
                 self.click_start_time = current_time
             # Se siamo in modalità drag e il click è mantenuto abbastanza a lungo, attiva il drag
-            elif drag_mode_enabled and not self.click_held and (current_time - self.click_start_time) > 0.3:
+            elif drag_mode_enabled and ring_up and not self.click_held and (current_time - self.click_start_time) > 0.3:
                 pyautogui.mouseDown()
                 self.click_held = True
                 click_performed = True
