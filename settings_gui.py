@@ -417,7 +417,7 @@ class SettingsGUI:
             "Zoom in": "Allontana gli indici della mano destra e sinistra",
             "Zoom out": "Avvicina gli indici della mano destra e sinistra",
             "Frecce direzionali": "Chiudi la mano sinistra a pugno e muovila nella direzione desiderata",
-            "Bloccare il mouse": "Per eseguire click precisi basta spostarsi con 'indice, fermarsi dove si vuole e abbassaere l'anulare destro, questo bloccherà il mouse in quella posizione,grarantendo maggiore precisione."
+            "Bloccare il mouse": "Per eseguire click precisi basta spostarsi con 'indice, fermarsi dove si vuole e abbassare l'anulare destro, questo bloccherà il mouse in quella posizione, garantendo maggiore precisione."
         }
 
         for title, desc in gesture_info.items():
@@ -444,9 +444,9 @@ class SettingsGUI:
             "Cooldown zoom": "Imposta quanto tempo deve passare tra due azioni di zoom per evitarne l'attivazione involontaria.",
             "Fattore di smoothing di zoom": "Numero di letture recenti usate per calcolare la distanza media tra gli indici, rendendo lo zoom più stabile.",
             "Tempo cooldown slide": "Imposta un tempo tra due movimenti di slide nelle 4 direzioni.",
-            "Zona morta":"Valore che entro il quale un movimento viene considerato nullo(ottimo in oresenza di tremolio della mano)",
+            "Zona morta":"Valore che entro il quale un movimento viene considerato nullo (ottimo in presenza di tremolio della mano)",
             "Confidenza riconoscimento mani": "Imposta la soglia di affidabilità per considerare rilevata una mano. Valori alti riducono i falsi positivi, ma possono appesantire l'esecuzione del programma.",
-            "Accelerazione hardware": "Se abilitato, utilizza l'accelerazione hardware (se supportata) per migliorare le prestazioni, ma può appesantire l'esecuzione del programma. In particolare delega il compito computazionale alla GPU, in questo momemnto è in fase Beta e non è del tutto implementata",
+            "Accelerazione hardware": "Se abilitato, utilizza l'accelerazione hardware (se supportata) per migliorare le prestazioni, ma può appesantire l'esecuzione del programma. In particolare delega il compito computazionale alla GPU, in questo momento è in fase Beta e non è del tutto implementata",
             "Risoluzione camera": "Definisce la risoluzione del feed video della fotocamera. Valori più alti aumentano la precisione ma anche il carico di calcolo.",
             "Complessità del modello": "Determina la complessità della rete neurale che rileva le mani. Il modello 0 è veloce e leggero ma meno accurato, il modello 1 è più preciso ma più pesante."
         }
