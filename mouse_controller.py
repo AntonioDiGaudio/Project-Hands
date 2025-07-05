@@ -13,7 +13,7 @@ class OneEuroFilter:
         self.freq = float(freq) # Sarebbero gli fps
         self.min_cutoff = float(min_cutoff) # Piu alto= piu reattivo
         self.beta = float(beta) # Piu alto = piu adattivo ai movimenti rapidi
-        self.d_cutoff = float(d_cutoff) # cutoff per derrivata, si stima la velocita(derivata).Si applica un filtro passa basso a questa derivata, per evitare che rumori istantanei la falsino
+        self.d_cutoff = float(d_cutoff) # cutoff per derivata, si stima la velocita(derivata).Si applica un filtro passa basso a questa derivata, per evitare che rumori istantanei la falsino
         self.x_prev = None
         self.dx_prev = 0.0
         self.last_time = None
