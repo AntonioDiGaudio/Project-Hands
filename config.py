@@ -4,7 +4,8 @@ Contiene i parametri configurabili per il controllo del mouse e il riconosciment
 """
 
 # Parametri per il controllo del mouse
-alpha_smooth = 0.25  # Fattore di smoothing per il movimento del cursore
+# Aumentato per rendere il movimento del cursore più fluido
+alpha_smooth = 0.4  # Fattore di smoothing per il movimento del cursore
 overscan_x = 2     # Fattore di overscan orizzontale
 overscan_y = 2     # Fattore di overscan verticale
 cursor_speed_multiplier = 1.0  # Moltiplicatore di velocità del cursore
@@ -32,8 +33,10 @@ min_tracking_confidence = 0.8  # Confidenza minima per il tracciamento delle man
 
 
 
-deadzone_threshold = 5 # Zona morta, con cui si considera il movimento del mouse come nullo
-target_fps = 15
-drag_release_frames = 3  # Numero di fotogrammi consecutivi oltre la soglia per rilasciare il drag
-drag_release_multiplier = 1.5  # Moltiplicatore della soglia per riconoscere il rilascio del drag
+deadzone_threshold = 7  # Zona morta, con cui si considera il movimento del mouse come nullo
+# Maggior fps per una maggiore reattività
+target_fps = 30
+# Parametri per rendere più stabile il trascinamento
+drag_release_frames = 5  # Numero di fotogrammi consecutivi oltre la soglia per rilasciare il drag
+drag_release_multiplier = 2.0  # Moltiplicatore della soglia per riconoscere il rilascio del drag
 
