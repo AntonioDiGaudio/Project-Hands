@@ -89,7 +89,9 @@ class AirMouseApp:
 
 
         frame_counter = 0
-        skip_frames = 3 
+        # Ridotto per elaborare ogni fotogramma
+        skip_frames = 1
+        last_frame_time = 0
         # Ciclo principale per il riconoscimento della mano e il movimento del cursore
         while get_running():
             current_time = time.time()
@@ -97,13 +99,12 @@ class AirMouseApp:
             # Verifica se qualche parametro di configurazione è cambiato
             self.check_config_updates()
 
-            #frame_skipping
+            # frame skipping
             frame_counter += 1
             if frame_counter % skip_frames != 0:
                 continue  # Salta il frame
-                
-            #fps frame skipping
-            last_frame_time = 0
+
+            # controllo sugli FPS
             frame_interval = 1.0 / config.target_fps
             if current_time - last_frame_time < frame_interval:
                 continue  # Salta questo frame

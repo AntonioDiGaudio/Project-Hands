@@ -27,6 +27,14 @@ I parametri principali possono essere modificati nel file `config.py` oppure tra
 In particolare il parametro `drag_release_frames` determina dopo quanti fotogrammi consecutivi con le dita separate viene rilasciata la modalità di trascinamento, rendendo la gesture più stabile.
 Il parametro `drag_release_multiplier` invece imposta un margine sulla distanza per il rilascio: il drag viene interrotto solo quando la distanza supera `click_distance_threshold` moltiplicata per questo valore per il numero di fotogrammi indicato.
 
+### Consigli per una maggiore fluidità
+Le impostazioni predefinite sono state aggiornate per rendere i movimenti più stabili e reattivi:
+
+- `alpha_smooth` è impostato a `0.4` per smorzare i movimenti bruschi.
+- `deadzone_threshold` è aumentato a `7` per ridurre gli spostamenti involontari.
+- `target_fps` ora vale `30` e il ciclo elabora ogni frame.
+- `drag_release_frames` è fissato a `5` e `drag_release_multiplier` a `2.0` per un trascinamento più affidabile.
+
 
 ## Stato del progetto
 Il codice è in sviluppo e può essere utilizzato come base per ulteriori miglioramenti o integrazioni. Ogni contributo è benvenuto.
