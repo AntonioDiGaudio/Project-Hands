@@ -1,4 +1,4 @@
-alpha_smooth = 0.6
+alpha_smooth = 0.4
 overscan_x = 1.0
 overscan_y = 1.0
 click_cooldown = 0.05
@@ -15,4 +15,7 @@ camera_height = 240
 model_complexity = 0
 min_detection_confidence = 0.8
 min_tracking_confidence = 0.8
-deadzone_threshold  = 5.0
+deadzone_threshold  = 7.0
+target_fps = 30
+drag_release_frames = 5
+drag_release_multiplier = 2.0
