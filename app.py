@@ -107,6 +107,7 @@ class AirMouseApp:
             # controllo sugli FPS
             frame_interval = 1.0 / config.target_fps
             if current_time - last_frame_time < frame_interval:
+                time.sleep(max(0, frame_interval - (current_time - last_frame_time)))
                 continue  # Salta questo frame
             last_frame_time = current_time
            
