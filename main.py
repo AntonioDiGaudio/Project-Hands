@@ -8,6 +8,7 @@ import socket
 import tempfile
 import logging
 from app import main
+from module_profiler import start as start_profiler
 
 def setup_logging():
     """Configura il sistema di logging."""
@@ -52,7 +53,10 @@ if __name__ == "__main__":
     if already_running:
         logger.error("Un'altra istanza di AirMouse è già in esecuzione.")
         sys.exit(1)
-    
+
+    # Avvia il profiler per monitorare i moduli più pesanti
+    start_profiler()
+
     try:
         logger.info("Avvio di AirMouse...")
         main()
