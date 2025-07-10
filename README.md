@@ -18,7 +18,7 @@ Eseguire il file `main.py` per avviare l'applicazione:
 ```bash
 python main.py
 ```
-Alla prima esecuzione viene chiesta la selezione della webcam e vengono mostrate le impostazioni principali in una finestra dedicata.
+Alla esecuzione viene chiesta la selezione della webcam e vengono mostrate le impostazioni principali in una finestra dedicata.
 
 Durante l'esecuzione è possibile modificare alcune impostazioni (come risoluzione della camera e complessità del modello) tramite la finestra delle impostazioni. Il programma rileva le variazioni e aggiorna automaticamente la webcam e il tracker senza bisogno di riavviare l'applicazione.
 
@@ -37,5 +37,5 @@ Le impostazioni predefinite sono state aggiornate per rendere i movimenti più s
 
 
 ## Stato del progetto
-Il codice è in sviluppo e può essere utilizzato come base per ulteriori miglioramenti o integrazioni. Ogni contributo è benvenuto.
+Il codice è in sviluppo.
 
