@@ -42,11 +42,17 @@ class FakeHand:
         return self._middle if b == MIDDLE_TIP else self._pinch
 
 
-# Valori plausibili per le tre pose.
+# Valori plausibili per le quattro pose.
+#
+# Il terzo numero (pollice-medio) e' quello che la versione precedente
+# raccoglieva e poi buttava via, copiando le soglie del pinch indice su quello
+# medio. Le due geometrie non coincidono: qui pointing ha 0.95 e middle_pinch
+# 0.20, mentre sull'indice gli stessi due valori sono 1.30 e 0.24.
 POSE_HANDS = {
-    "pointing": FakeHand(1.42, 1.30),
-    "pinching": FakeHand(1.06, 0.24),
-    "fist": FakeHand(0.52, 0.34),
+    "pointing": FakeHand(1.42, 1.30, 0.95),
+    "pinching": FakeHand(1.06, 0.24, 0.80),
+    "middle_pinch": FakeHand(1.35, 0.85, 0.20),
+    "fist": FakeHand(0.52, 0.34, 0.30),
 }
 
 
@@ -152,9 +158,10 @@ def test_overlapping_poses_are_rejected():
     cal.start(1000.0)
     # Pugno e pinch con la stessa estensione: non separabili.
     drive(cal, hand_for=lambda key: {
-        "pointing": FakeHand(1.42, 1.30),
-        "pinching": FakeHand(0.60, 0.24),
-        "fist": FakeHand(0.62, 0.34),
+        "pointing": FakeHand(1.42, 1.30, 0.95),
+        "pinching": FakeHand(0.60, 0.24, 0.80),
+        "middle_pinch": FakeHand(1.35, 0.85, 0.20),
+        "fist": FakeHand(0.62, 0.34, 0.30),
     }[key])
     check("segnala la sovrapposizione", "_overlap" in cal.result,
           "risultato: %r" % cal.result)
@@ -183,8 +190,78 @@ def test_recording_does_not_depend_on_key_repeat():
     drive(cal)   # nessun altro input
     total = sum(len(s) for s in cal.samples.values())
     check("una sola pressione basta per l'intera procedura",
-          cal.state == DONE and total >= MIN_SAMPLES * 3,
+          cal.state == DONE and total >= MIN_SAMPLES * len(SEQUENCE),
           "%d campioni totali, stato %r" % (total, cal.state))
+
+
+def test_right_pinch_has_its_own_thresholds():
+    """
+    Regressione: le soglie del click destro venivano COPIATE da quelle
+    dell'indice. Le due distanze non hanno niente a che vedere fra loro, e con
+    la soglia dell'indice il pinch destro risulta chiuso gia' nella posa di
+    puntamento: primo movimento della mano, click destro non richiesto.
+    """
+    cal = Calibration()
+    cal.start(1000.0)
+    drive(cal)
+    r = cal.result
+    for key in ("right_pinch_close_ratio", "right_pinch_open_ratio"):
+        check("calcola %s" % key, key in r, "risultato: %r" % r)
+    if "right_pinch_close_ratio" not in r:
+        return
+
+    check("non e' una copia delle soglie dell'indice",
+          r["right_pinch_close_ratio"] != r["pinch_close_ratio"],
+          "entrambe %.2f" % r["right_pinch_close_ratio"])
+    check("le soglie destre sono in ordine",
+          r["right_pinch_close_ratio"] < r["right_pinch_open_ratio"], "%r" % r)
+    check("la posa di puntamento resta sopra la chiusura del pinch destro",
+          POSE_HANDS["pointing"]._middle > r["right_pinch_open_ratio"],
+          "puntamento %.2f contro apertura %.2f"
+          % (POSE_HANDS["pointing"]._middle, r["right_pinch_open_ratio"]))
+    check("il pinch medio sta sotto la chiusura",
+          POSE_HANDS["middle_pinch"]._middle < r["right_pinch_close_ratio"],
+          "pinch medio %.2f contro chiusura %.2f"
+          % (POSE_HANDS["middle_pinch"]._middle, r["right_pinch_close_ratio"]))
+
+
+def test_transition_frames_are_discarded():
+    """
+    Regressione sul profilo reale che ha rotto il click sinistro.
+
+    La registrazione partiva subito dopo il conto alla rovescia, quindi i primi
+    fotogrammi erano la mano ancora in viaggio verso la posa. Con il 95o
+    percentile, quei fotogrammi finivano dritti nella soglia: il profilo salvato
+    aveva pinch_close_ratio = 0.82, cioe' il valore di una mano aperta.
+    """
+    import calibrate as cal_mod
+
+    def moving(key):
+        # Per i primi istanti di ogni posa mostra ancora la mano aperta.
+        return POSE_HANDS[key]
+
+    cal = Calibration()
+    cal.start(1000.0)
+    now = 1000.0
+    dt = 1 / 30.0
+    while cal.state not in (DONE, IDLE):
+        now += dt
+        pose = cal.pose
+        key = pose[0] if pose else None
+        hand = POSE_HANDS[key] if key else None
+        # Durante l'assestamento la mano e' ancora quella aperta della posa
+        # precedente: il caso reale.
+        if (cal.state == CAPTURING
+                and now - cal.phase_start < cal_mod.SETTLE):
+            hand = POSE_HANDS["pointing"]
+        cal.tick(hand, now)
+
+    r = cal.result
+    check("i fotogrammi di transizione non inquinano la soglia",
+          r.get("pinch_close_ratio", 9.9) < 0.60,
+          "pinch_close_ratio = %r" % r.get("pinch_close_ratio"))
+    check("nessun valore implausibile viene proposto",
+          "_rifiutati" not in r, "scartati: %r" % r.get("_rifiutati"))
 
 
 def main():

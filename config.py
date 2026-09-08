@@ -67,11 +67,34 @@ require_pointing_pose = True     # nessuna gesture se la mano non e' in posa di 
 # Usa `python calibrate.py` per leggere i valori reali della tua mano.
 index_control_ratio = 0.75
 
+# La stessa soglia per il medio, usata dal click destro. Il pinch pollice+medio
+# viene proprio ignorato se il medio non e' disteso: da ripiegato nel palmo, col
+# pollice appoggiato sopra, la distanza pollice-medio vale gia' circa 0.35 e
+# sarebbe indistinguibile da un pinch fatto apposta.
+middle_control_ratio = 0.75
+
 # Il cursore si congela quando il pinch scende sotto questa soglia. Va tenuta
 # piu' alta di pinch_open_ratio: cosi' il blocco scatta gia' durante
 # l'avvicinamento delle dita, prima che la punta dell'indice (che e' il
 # cursore) si sia spostata in modo percepibile.
+#
+# ATTENZIONE: da sola questa soglia non basta, ed e' stata la causa del
+# "cursore che si pianta". E' un LIVELLO, e ci sono pose ferme che ci stanno
+# sotto per sempre: nella normale posa di puntamento il medio e' ripiegato nel
+# palmo col pollice appoggiato sopra, quindi il rapporto pollice-medio vale
+# circa 0.35 e il cursore restava congelato al 100% dei fotogrammi. Per questo
+# il congelamento richiede anche un AVVICINAMENTO in corso e ha una durata
+# massima.
 pinch_freeze_ratio = 0.95
+
+# Quanto deve essere sceso il rapporto rispetto al suo massimo negli ultimi
+# `pinch_approach_window` secondi perche' si consideri un avvicinamento vero.
+pinch_approach_drop = 0.20
+pinch_approach_window = 0.5
+
+# Durata massima di un congelamento del cursore. Oltre questa, le dita sono
+# semplicemente ferme a mezz'aria e il cursore torna libero.
+pinch_freeze_max_time = 0.7
 min_handedness_score = 0.70      # scarta le mani riconosciute con poca confidenza
 hand_reacquire_grace = 0.25      # s di silenzio dopo che una mano ricompare
 max_gesture_speed = 2500.0       # px schermo/s: sopra, i click sono ignorati
@@ -81,12 +104,21 @@ finger_confirm_frames = 2
 teleport_reset_ratio = 0.45      # salto > 45% del frame -> riaggancio, gesture inibite
 cursor_engage_frames = 3         # fotogrammi consecutivi con la mano prima di muovere il cursore
 
+# Quanti fotogrammi senza mano si tollerano prima di dichiararla persa. Il
+# modello perde l'aggancio per un fotogramma di continuo; senza tolleranza ogni
+# buco faceva scattare hand_lost, che azzera lo stato e apre 0.25 s di grazia:
+# il cursore si inchiodava a intermittenza e un drag in corso veniva rilasciato.
+hand_lost_frames = 3
+
 # ---------------------------------------------------------------------------
 # Scroll a due dita (indice + medio estesi, movimento verticale)
 # ---------------------------------------------------------------------------
 enable_scroll = True
 scroll_deadzone = 0.012          # frazione di altezza frame prima di scrollare
-scroll_gain = 9.0
+# Scatti di rotellina per un'altezza intera di frame. L'unita' e' lo scatto
+# (WHEEL_DELTA), non un numero arbitrario: vedi mouse_controller.scroll.
+scroll_gain = 25.0
+scroll_max_notches = 4           # tetto per evento, contro le sbandate
 scroll_cooldown = 0.03
 
 # ---------------------------------------------------------------------------
@@ -96,6 +128,7 @@ enable_zoom = True
 zoom_trigger_ratio = 0.18        # variazione relativa della distanza per far scattare uno zoom
 zoom_cooldown_time = 0.35
 zoom_smooth_factor = 5
+zoom_notches = 1                 # scatti di ctrl+rotellina per passo di zoom
 
 # ---------------------------------------------------------------------------
 # Slide (palmo chiuso della mano non dominante -> frecce direzionali)
@@ -119,7 +152,22 @@ camera_buffer_size = 1           # niente frame vecchi in coda = niente latenza
 # ---------------------------------------------------------------------------
 # Modello
 # ---------------------------------------------------------------------------
-model_complexity = 0             # 0 = lite (~35 ms), 1 = full (~56 ms)
+# 0 = lite, 1 = full. Misurato su questa macchina, con la webcam reale e ogni
+# configurazione in un processo pulito (misurarle di fila nello stesso processo
+# le contamina: vedi benchmark.py):
+#
+#     complessita' 0    14.4 ms per fotogramma
+#     complessita' 1    16.7 ms per fotogramma   (+2.3 ms)
+#
+# Il default e' 1. Il tetto reale del loop e' la webcam, che consegna 30 fps
+# cioe' un fotogramma ogni 33 ms: 2.3 ms in piu' non tolgono un solo
+# fotogramma, e in cambio i landmark del pollice durante il pinch sono
+# nettamente piu' stabili. E' il pollice che decide se un click parte, quindi
+# quei 2.3 ms comprano precisione esattamente dove serve.
+#
+# Su una macchina che non regge, il governor delle prestazioni scende da solo
+# a 0: e' la prima cosa che toglie, perche' e' anche la piu' redditizia.
+model_complexity = 1
 min_detection_confidence = 0.6
 min_tracking_confidence = 0.5
 preferred_hand = "Right"

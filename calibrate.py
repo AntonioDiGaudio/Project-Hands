@@ -8,7 +8,9 @@ mano e da come la tieni davanti alla webcam. Valori scelti a tavolino possono
 sembrare corretti e non esserlo.
 
 Come funziona: premi SPAZIO una volta sola e il programma ti guida attraverso
-tre pose, con un conto alla rovescia per ciascuna, registrando da solo.
+quattro pose, con un conto alla rovescia per ciascuna, registrando da solo. La
+registrazione di ogni posa comincia dopo `SETTLE` secondi, cosi' i fotogrammi
+in cui la mano si sta ancora portando nella posa non finiscono nelle soglie.
 
 Nota sul perche' non si tiene premuto un tasto: la prima versione chiedeva di
 tenere premuto 1/2/3 mentre `cv2.waitKey` faceva polling. Non funziona. La
@@ -28,16 +30,36 @@ from webcam_manager import WebcamManager
 
 WINDOW = "AirMouse - calibrazione"
 
+_POLL_KEY = hasattr(cv2, "pollKey")
+
 # (chiave, istruzione mostrata a schermo)
 SEQUENCE = [
     ("pointing", "INDICE PUNTATO", "indice ben teso, pollice staccato"),
     ("pinching", "POLLICE + INDICE UNITI", "il gesto del click, tienilo fermo"),
+    ("middle_pinch", "POLLICE + MEDIO UNITI", "il gesto del click destro"),
     ("fist", "PUGNO CHIUSO", "tutte le dita ripiegate sul palmo"),
 ]
 
 COUNTDOWN = 2.5   # secondi di preparazione prima di ogni posa
 CAPTURE = 2.5     # secondi di registrazione
+# I primi fotogrammi di ogni posa sono la mano ancora in movimento verso di
+# essa. Registrarli e' il motivo per cui la calibrazione precedente ha prodotto
+# un profilo inutilizzabile: la posa "pollice + indice uniti" e' finita con un
+# 95o percentile di 0.75, cioe' il valore di una mano APERTA, e da li' e' uscito
+# pinch_close_ratio = 0.82. Con quel profilo un pugno chiuso emette drag_start.
+SETTLE = 0.8      # secondi scartati all'inizio di ogni registrazione
 MIN_SAMPLES = 12  # sotto questa soglia la posa non e' utilizzabile
+
+# Limiti di plausibilita', gli stessi che settings_gui applica al caricamento.
+# Meglio rifiutare qui che scrivere un profilo che poi viene scartato.
+SANE = {
+    "pinch_close_ratio": (0.15, 0.60),
+    "pinch_open_ratio": (0.25, 0.95),
+    "right_pinch_close_ratio": (0.15, 0.60),
+    "right_pinch_open_ratio": (0.25, 0.95),
+    "pinch_freeze_ratio": (0.40, 1.60),
+    "index_control_ratio": (0.55, 1.30),
+}
 
 # Stati della procedura.
 IDLE, COUNTING, CAPTURING, DONE = "idle", "counting", "capturing", "done"
@@ -51,7 +73,10 @@ class Samples:
         self.pinch = []
         self.middle_pinch = []
 
-    def add(self, hand):
+    def add(self, hand, settled=True):
+        """`settled` False mentre la mano si sta ancora portando nella posa."""
+        if not settled:
+            return
         self.extension.append(hand.index_extension)
         self.pinch.append(hand.ratio(THUMB_TIP, INDEX_TIP))
         self.middle_pinch.append(hand.ratio(THUMB_TIP, MIDDLE_TIP))
@@ -70,6 +95,23 @@ class Samples:
                 ordered[min(n - 1, int(n * 0.95))])
 
 
+def _thresholds(open_low, closed_high, prefix):
+    """
+    Soglie di un pinch, dai due estremi che lo separano dalla posa aperta.
+
+    Restituisce {} se le due pose si sovrappongono: e' l'unico caso in cui non
+    c'e' proprio una soglia che le separi, e inventarne una comunque e' peggio
+    che dirlo.
+    """
+    if open_low <= closed_high:
+        return {}
+    gap = open_low - closed_high
+    return {
+        prefix + "_close_ratio": round(closed_high + gap * 0.25, 2),
+        prefix + "_open_ratio": round(closed_high + gap * 0.60, 2),
+    }
+
+
 def compute(samples):
     """
     Ricava le soglie dalle pose registrate.
@@ -77,10 +119,19 @@ def compute(samples):
     `index_control_ratio` va nel mezzo fra il pinch (che deve passare) e il
     pugno (che deve essere fermato): li' la separazione fra le due pose e' piu'
     ampia possibile, quindi la soglia tollera meglio il rumore.
+
+    Il pinch destro ha una posa TUTTA SUA. La versione precedente copiava le
+    soglie del pinch indice, e le due geometrie non c'entrano niente l'una con
+    l'altra: nella posa di puntamento il medio e' ripiegato nel palmo col
+    pollice appoggiato sopra, quindi la distanza pollice-medio vale gia' circa
+    0.35 della mano. Con la soglia dell'indice, il pinch destro risulta chiuso a
+    riposo e spara un click destro al primo momento in cui apri la mano. I
+    campioni pollice-medio venivano peraltro gia' raccolti, e poi buttati.
     """
     out = {}
     pointing = samples.get("pointing")
     pinching = samples.get("pinching")
+    middle = samples.get("middle_pinch")
     fist = samples.get("fist")
 
     enough = lambda s: s is not None and len(s) >= MIN_SAMPLES
@@ -97,18 +148,30 @@ def compute(samples):
     if enough(pointing) and enough(pinching):
         open_low = Samples.span(pointing.pinch)[0]
         pinch_high = Samples.span(pinching.pinch)[2]
-        if open_low > pinch_high:
-            gap = open_low - pinch_high
-            out["pinch_close_ratio"] = round(pinch_high + gap * 0.25, 2)
-            out["pinch_open_ratio"] = round(pinch_high + gap * 0.60, 2)
-            out["right_pinch_close_ratio"] = out["pinch_close_ratio"]
-            out["right_pinch_open_ratio"] = out["pinch_open_ratio"]
+        left = _thresholds(open_low, pinch_high, "pinch")
+        if left:
+            out.update(left)
             # Il congelamento sta appena SOTTO la mano aperta piu' stretta: le
             # dita rilassate lasciano il cursore libero, ma appena iniziano ad
-            # avvicinarsi il cursore si inchioda.
+            # avvicinarsi il cursore si inchioda. Non e' piu' da solo a decidere
+            # (serve anche un avvicinamento in corso), ma resta il livello oltre
+            # il quale il blocco non e' nemmeno preso in considerazione.
+            gap = open_low - pinch_high
             out["pinch_freeze_ratio"] = round(open_low - gap * 0.20, 2)
         else:
             out["_pinch_overlap"] = (round(pinch_high, 2), round(open_low, 2))
+
+    if enough(pointing) and enough(middle):
+        # Riferimento della posa "aperta" per il medio: il medio della posa di
+        # puntamento, che e' proprio la configurazione in cui non si deve
+        # cliccare a destra.
+        open_low = Samples.span(pointing.middle_pinch)[0]
+        closed_high = Samples.span(middle.middle_pinch)[2]
+        right = _thresholds(open_low, closed_high, "right_pinch")
+        if right:
+            out.update(right)
+        else:
+            out["_right_overlap"] = (round(closed_high, 2), round(open_low, 2))
 
     # Le soglie devono restare in ordine, altrimenti l'isteresi si inverte e le
     # gesture sfarfallano. Meglio accorgersene qui che in uso.
@@ -119,9 +182,25 @@ def compute(samples):
         if not (close < open_ < freeze):
             out["_bad_order"] = (close, open_, freeze)
             for key in ("pinch_close_ratio", "pinch_open_ratio",
-                        "pinch_freeze_ratio", "right_pinch_close_ratio",
-                        "right_pinch_open_ratio"):
+                        "pinch_freeze_ratio"):
                 out.pop(key, None)
+    if (out.get("right_pinch_close_ratio") is not None
+            and out["right_pinch_close_ratio"] >= out["right_pinch_open_ratio"]):
+        out["_bad_right_order"] = (out["right_pinch_close_ratio"],
+                                   out["right_pinch_open_ratio"])
+        out.pop("right_pinch_close_ratio")
+        out.pop("right_pinch_open_ratio")
+
+    # Ultimo filtro: qualunque valore fuori dai limiti di plausibilita' viene
+    # scartato invece di essere scritto su file. Un profilo con
+    # pinch_close_ratio = 0.82 non descrive un pinch, e va rifiutato QUI: era
+    # gia' stato scritto una volta, e nessuno se n'e' accorto fino a quando il
+    # click sinistro ha smesso di funzionare.
+    for key, (lo, hi) in SANE.items():
+        value = out.get(key)
+        if value is not None and not (lo <= value <= hi):
+            out.setdefault("_rifiutati", []).append((key, value))
+            out.pop(key)
     return out
 
 
@@ -191,7 +270,7 @@ class Calibration:
             self.message = "Mano non rilevata: rimettila nell'inquadratura"
             return 0.0
 
-        self.samples[key].add(hand)
+        self.samples[key].add(hand, settled=elapsed >= SETTLE)
         self.message = ""
         if elapsed >= CAPTURE:
             self.step += 1
@@ -342,7 +421,10 @@ def main():
             _panel(frame, lines)
             cv2.imshow(WINDOW, frame)
 
-            key = cv2.waitKey(1) & 0xFF
+            # pollKey invece di waitKey(1): stesso comportamento sui tasti,
+            # ma senza i 15.6 ms per fotogramma del ciclo di messaggi Win32
+            # (vedi app.py). Qui significa piu' campioni per posa.
+            key = (cv2.pollKey() if _POLL_KEY else cv2.waitKey(1)) & 0xFF
             if key != 255:
                 no_key_since = now
             if key == 27:
@@ -373,9 +455,11 @@ def _save(cal):
             continue
         lo, mid, hi = Samples.span(s.extension)
         plo, pmid, phi = Samples.span(s.pinch)
+        mlo, mmid, mhi = Samples.span(s.middle_pinch)
         print("  %-22s %3d campioni" % (title.lower(), len(s)))
-        print("      indice teso  %.2f - %.2f  (mediana %.2f)" % (lo, hi, mid))
-        print("      pinch        %.2f - %.2f  (mediana %.2f)" % (plo, phi, pmid))
+        print("      indice teso    %.2f - %.2f  (mediana %.2f)" % (lo, hi, mid))
+        print("      pollice-indice %.2f - %.2f  (mediana %.2f)" % (plo, phi, pmid))
+        print("      pollice-medio  %.2f - %.2f  (mediana %.2f)" % (mlo, mhi, mmid))
 
     values = cal.result
     if "_overlap" in values:
@@ -386,11 +470,23 @@ def _save(cal):
         print("\n  Mano aperta e pinch si sovrappongono (%.2f contro %.2f)."
               % values["_pinch_overlap"])
         print("  Separa di piu' pollice e indice nella posa a indice puntato.")
+    if "_right_overlap" in values:
+        print("\n  Pollice+medio uniti e posa di puntamento si sovrappongono "
+              "(%.2f contro %.2f)." % values["_right_overlap"])
+        print("  Nella posa a indice puntato tieni il pollice lontano dal medio.")
     if "_bad_order" in values:
         print("\n  Soglie del pinch scartate: fuori ordine %r."
               % (values["_bad_order"],))
+    if "_bad_right_order" in values:
+        print("\n  Soglie del pinch destro scartate: fuori ordine %r."
+              % (values["_bad_right_order"],))
+    for key, value in values.get("_rifiutati", ()):
+        lo, hi = SANE[key]
+        print("\n  %s = %.2f e' fuori dall'intervallo plausibile %.2f-%.2f:"
+              " scartato." % (key, value, lo, hi))
+        print("  Rifai la posa con piu' cura: le dita devono toccarsi davvero.")
 
-    clean = {k: v for k, v in values.items() if not k.startswith("_")}
+    clean ={k: v for k, v in values.items() if not k.startswith("_")}
     if not clean:
         print("\n  Niente da salvare: rifai la procedura con R.")
         return False

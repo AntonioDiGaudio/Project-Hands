@@ -82,21 +82,41 @@ def run_benchmark():
     print("\n[2] Modello MediaPipe (ms per fotogramma)")
     import mediapipe as mp
 
+    # Ogni configurazione viene misurata piu' volte e si tiene il MINIMO.
+    #
+    # Non e' pignoleria. Costruire quattro grafi MediaPipe di fila nello stesso
+    # processo contamina le misure: i thread pool XNNPACK dei grafi gia' chiusi
+    # non spariscono subito e le configurazioni misurate per ultime pagano la
+    # contesa. Con una passata sola questo banco ha prodotto 35.4 ms per
+    # "2 mani, complessita' 0" contro 14.3 ms misurati in un processo pulito —
+    # e, cosa che rende l'errore evidente, piu' della stessa configurazione a
+    # complessita' 1. La contaminazione puo' solo AGGIUNGERE tempo, quindi il
+    # minimo su piu' passate e' la stima giusta.
+    passes = 3
+    best = {}
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    for _ in range(passes):
+        for hands_n in (1, 2):
+            for complexity in (0, 1):
+                model = mp.solutions.hands.Hands(
+                    static_image_mode=False, max_num_hands=hands_n,
+                    model_complexity=complexity,
+                    min_detection_confidence=config.min_detection_confidence,
+                    min_tracking_confidence=config.min_tracking_confidence,
+                )
+                dt = _timed(lambda: model.process(rgb), warmup=5, runs=20)
+                model.close()
+                key = (hands_n, complexity)
+                if key not in best or dt < best[key]:
+                    best[key] = dt
+
     results = {}
-    for hands_n in (1, 2):
-        for complexity in (0, 1):
-            model = mp.solutions.hands.Hands(
-                static_image_mode=False, max_num_hands=hands_n,
-                model_complexity=complexity,
-                min_detection_confidence=config.min_detection_confidence,
-                min_tracking_confidence=config.min_tracking_confidence,
-            )
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            dt = _timed(lambda: model.process(rgb), warmup=3, runs=15)
-            model.close()
-            results[(hands_n, complexity)] = dt * 1000.0
-            print("    %d mano/i, complessita' %d : %6.1f ms  (%5.1f fps)"
-                  % (hands_n, complexity, dt * 1000.0, 1.0 / dt))
+    for (hands_n, complexity), dt in sorted(best.items()):
+        results[(hands_n, complexity)] = dt * 1000.0
+        print("    %d mano/i, complessita' %d : %6.1f ms  (%5.1f fps)"
+              % (hands_n, complexity, dt * 1000.0, 1.0 / dt))
+    print("    (minimo su %d passate: una passata sola sovrastima, vedi commento)"
+          % passes)
 
     # -- costo del contorno ----------------------------------------------
     print("\n[3] Costo per fotogramma del contorno (ms)")

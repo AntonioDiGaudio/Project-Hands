@@ -49,10 +49,10 @@ class HandObservation:
     """Una mano rilevata in un frame, con tutte le misure gia' normalizzate."""
 
     __slots__ = ("label", "score", "points", "scale", "fingers", "reacquired",
-                 "index_extension")
+                 "index_extension", "middle_extension")
 
     def __init__(self, label, score, points, scale, fingers, reacquired,
-                 index_extension):
+                 index_extension, middle_extension=1.4):
         self.label = label            # "Right" / "Left"
         self.score = score            # confidenza handedness 0..1
         self.points = points          # lista di (x, y) float normalizzati 0..1
@@ -74,6 +74,18 @@ class HandObservation:
         # stai facendo click. Misurando dalla nocca il pinch resta ben
         # separato dal pugno.
         self.index_extension = index_extension
+
+        # Stessa misura per il medio, e serve per lo stesso motivo.
+        #
+        # Il click destro e' "pollice + medio uniti", ma la sola distanza fra
+        # le due punte non basta a riconoscerlo: nella normale posa di
+        # puntamento il medio e' ripiegato nel palmo e il pollice gli si
+        # appoggia sopra, quindi quella distanza vale gia' circa 0.35 della
+        # mano, cioe' meno della soglia di chiusura. Senza sapere se il medio
+        # e' DISTESO, la posa di puntamento e' indistinguibile da un pinch
+        # medio: il cursore si congela e al primo movimento parte un click
+        # destro non richiesto.
+        self.middle_extension = middle_extension
 
     def point(self, idx):
         return self.points[idx]
@@ -281,8 +293,11 @@ class HandTracker:
         kx, ky = pts[INDEX_MCP]
         index_extension = math.hypot(ix - kx, iy - ky) / scale
 
+        tx2, ty2 = pts[MIDDLE_TIP]
+        middle_extension = math.hypot(tx2 - mx, ty2 - my) / scale
+
         return HandObservation(label, score, pts, scale, fingers, reacquired,
-                               index_extension)
+                               index_extension, middle_extension)
 
     @staticmethod
     def _fingers_up(pts, state):

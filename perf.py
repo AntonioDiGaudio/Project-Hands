@@ -13,9 +13,23 @@ risale con calma, per non oscillare fra due livelli.
 Cosa viene sacrificato, in ordine:
 
     livello 0  tutto attivo
-    livello 1  niente landmark disegnati, overlay piu' raro
-    livello 2  niente finestra di debug, una sola mano
-    livello 3  modello lite forzato, risoluzione ridotta
+    livello 1  niente landmark disegnati, niente overlay
+    livello 2  modello lite forzato
+    livello 3  niente finestra di debug, risoluzione ridotta
+
+L'ordine e' stato rifatto sulle misure, perche' quello precedente spendeva i
+primi due livelli su cose che non costano niente. Con `cv2.pollKey()` al posto
+di `cv2.waitKey(1)`, l'intero `_render` (imshow + overlay + tastiera) costa
+0.99 ms mediani contro i 15.7 ms di prima: chiudere la finestra di debug non e'
+piu' un risparmio. Il modello si': complessita' 1 contro 0 vale 2.3 ms
+misurati, cioe' l'unica leva vera. Quindi il modello viene prima della
+finestra, non dopo.
+
+**Il governor non spegne funzioni, solo qualita' visiva.** Prima al livello 2
+disattivava `enable_zoom`: l'utente perdeva lo zoom senza nessuna indicazione
+del perche', e la cosa si mangiava anche `max_num_hands`, che in `app` segue
+proprio `enable_zoom` — i due si rincorrevano ricostruendo il grafo MediaPipe.
+Ridurre la qualita' e' legittimo, togliere una gesture no.
 
 Nota importante emersa dai benchmark: **ridurre la risoluzione della camera non
 accelera l'inferenza** (MediaPipe ridimensiona comunque a 192x192 al suo
@@ -80,7 +94,6 @@ class PerformanceGovernor:
                 "draw_landmarks": cfg.draw_landmarks,
                 "show_debug_window": cfg.show_debug_window,
                 "overlay_enabled": cfg.overlay_enabled,
-                "enable_zoom": cfg.enable_zoom,
                 "model_complexity": cfg.model_complexity,
                 "camera_width": cfg.camera_width,
                 "camera_height": cfg.camera_height,
@@ -142,17 +155,15 @@ class PerformanceGovernor:
 
         if self.level >= 1:
             cfg.draw_landmarks = False
-        if self.level >= 2:
             cfg.overlay_enabled = False
-            cfg.show_debug_window = False
-            cfg.enable_zoom = False
-            if hand_tracker is not None:
-                hand_tracker.reconfigure(max_num_hands=1)
-        if self.level >= 3:
+        if self.level >= 2:
+            # La leva vera: 2.3 ms misurati. Viene prima della finestra.
             cfg.model_complexity = 0
-            cfg.camera_width, cfg.camera_height = 424, 240
             if hand_tracker is not None:
                 hand_tracker.reconfigure(model_complexity=0)
+        if self.level >= 3:
+            cfg.show_debug_window = False
+            cfg.camera_width, cfg.camera_height = 424, 240
 
     def _upgrade(self, hand_tracker):
         cfg = self.config
@@ -161,17 +172,16 @@ class PerformanceGovernor:
         print("[perf] margine disponibile: risalgo a qualita' '%s'" % self.level_name())
 
         if self.level < 3:
-            cfg.model_complexity = prefs.get("model_complexity", cfg.model_complexity)
+            cfg.show_debug_window = prefs.get("show_debug_window", True)
             cfg.camera_width = prefs.get("camera_width", cfg.camera_width)
             cfg.camera_height = prefs.get("camera_height", cfg.camera_height)
+        if self.level < 2:
+            cfg.model_complexity = prefs.get("model_complexity", cfg.model_complexity)
             if hand_tracker is not None:
                 hand_tracker.reconfigure(model_complexity=cfg.model_complexity)
-        if self.level < 2:
-            cfg.overlay_enabled = prefs.get("overlay_enabled", True)
-            cfg.show_debug_window = prefs.get("show_debug_window", True)
-            cfg.enable_zoom = prefs.get("enable_zoom", True)
         if self.level < 1:
             cfg.draw_landmarks = prefs.get("draw_landmarks", True)
+            cfg.overlay_enabled = prefs.get("overlay_enabled", True)
 
     def _restore(self, hand_tracker):
         """Torna alle preferenze dell'utente (auto_performance disattivato)."""

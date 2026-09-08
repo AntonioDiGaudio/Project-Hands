@@ -99,7 +99,12 @@ class FrameGrabber:
                     self.dropped += 1
                 self._frame = frame
                 self._seq += 1
-            self._new_frame.set()
+                # `set()` dentro il lock, non fuori. Fuori si perde una corsa:
+                # il consumatore puo' prendere il frame e azzerare l'evento
+                # fra la scrittura e il set, e allora l'evento resta acceso su
+                # una casella vuota. Il giro dopo `read` torna subito con
+                # (False, None) e il loop principale spreca un'iterazione.
+                self._new_frame.set()
 
     def read(self, timeout=1.0):
         """

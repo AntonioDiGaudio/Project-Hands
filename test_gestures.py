@@ -32,7 +32,8 @@ EXT_FIST = 0.50       # indice ripiegato sul palmo
 
 
 def make_hand(index_pinch=1.0, middle_pinch=1.0, fingers=(1, 0, 0, 0),
-              wrist=(0.5, 0.8), reacquired=False, index_extension=None):
+              wrist=(0.5, 0.8), reacquired=False, index_extension=None,
+              middle_extension=None):
     """
     Costruisce una HandObservation sintetica.
 
@@ -44,6 +45,8 @@ def make_hand(index_pinch=1.0, middle_pinch=1.0, fingers=(1, 0, 0, 0),
     """
     if index_extension is None:
         index_extension = EXT_PINCHING if index_pinch < 0.7 else EXT_POINTING
+    if middle_extension is None:
+        middle_extension = EXT_PINCHING if middle_pinch < 0.7 else EXT_POINTING
 
     pts = [(0.0, 0.0)] * 21
     wx, wy = wrist
@@ -55,7 +58,7 @@ def make_hand(index_pinch=1.0, middle_pinch=1.0, fingers=(1, 0, 0, 0),
     pts[12] = (tx + middle_pinch * SCALE, ty)      # punta medio
     pts[5] = (wx + 0.02, wy - SCALE * 0.9)         # nocca indice
     return HandObservation("Right", 0.98, pts, SCALE, tuple(fingers), reacquired,
-                           index_extension)
+                           index_extension, middle_extension)
 
 
 class Clock:
@@ -346,18 +349,160 @@ def test_scale_invariance():
           outcomes == [1, 1, 1], "click per distanza: %r" % outcomes)
 
 
-def main():
-    print("Test della macchina a stati delle gesture\n")
+def test_pointing_pose_does_not_freeze_the_cursor():
+    """
+    Il bug del "cursore che si pianta".
+
+    Nella normale posa di puntamento il medio e' ripiegato nel palmo col
+    pollice appoggiato sopra: la distanza pollice-medio vale circa 0.35 della
+    mano, cioe' sta STABILMENTE sotto pinch_freeze_ratio. Con un congelamento
+    deciso sul solo livello, il cursore risultava congelato su 120 fotogrammi
+    su 120, cioe' per sempre. Serve un avvicinamento in corso, non un livello.
+    """
+    r = GestureRecognizer(config)
+    clock = Clock()
+    settle(r, clock)
+    frozen = 0
+    for _ in range(120):
+        hand = make_hand(1.05, 0.35, fingers=(1, 0, 0, 0),
+                          middle_extension=EXT_FIST)
+        now = clock.advance(1 / 30)
+        r.prepare(hand, now)
+        if r.cursor_frozen():
+            frozen += 1
+        r.update(hand, (960, 540), now)
+    check("la posa di puntamento non congela il cursore", frozen == 0,
+          "congelato %d/120 fotogrammi (pollice-medio %.2f, soglia %.2f)"
+          % (frozen, r.right_ratio, config.pinch_freeze_ratio))
+
+
+def test_pointing_pose_does_not_fire_right_click():
+    """
+    Stessa geometria, altro sintomo: con pollice-medio gia' sotto la soglia il
+    rilevatore destro parte "chiuso", e il primo momento in cui apri la mano
+    produce un click destro che nessuno ha chiesto.
+    """
+    r = GestureRecognizer(config)
+    clock = Clock()
+    settle(r, clock)
+    run(r, clock, make_hand(1.05, 0.35, fingers=(1, 0, 0, 0),
+                          middle_extension=EXT_FIST), frames=60)
+    events = run(r, clock, make_hand(1.05, 1.30, fingers=(1, 1, 1, 1)), frames=30)
+    check("aprire la mano dopo aver puntato non clicca a destra",
+          RIGHT_CLICK not in events, "eventi: %r" % events)
+
+
+def test_cursor_freeze_has_a_time_limit():
+    """Rete di sicurezza: dita ferme a mezz'aria non tengono ostaggio il cursore."""
+    r = GestureRecognizer(config)
+    clock = Clock()
+    settle(r, clock)
+    # Avvicinamento vero, poi si resta li' senza chiudere del tutto.
+    half = (config.pinch_close_ratio + config.pinch_freeze_ratio) / 2
+    hand = make_hand(half, 1.3)
+    now = clock.advance(1 / 30)
+    r.prepare(hand, now)
+    check("congelato appena le dita si avvicinano", r.cursor_frozen(),
+          "rapporto %.2f" % r.left_ratio)
+    frozen_at_end = True
+    for _ in range(int(30 * (config.pinch_freeze_max_time + 0.5))):
+        now = clock.advance(1 / 30)
+        r.prepare(hand, now)
+        frozen_at_end = r.cursor_frozen()
+        r.update(hand, (960, 540), now)
+    check("il congelamento non dura per sempre", not frozen_at_end,
+          "ancora congelato dopo %.1f s" % (config.pinch_freeze_max_time + 0.5))
+
+
+def test_click_duration_ignores_confirmation_lag():
+    """
+    Un pinch piu' corto di drag_hold_time deve restare un click.
+
+    `held` era misurato fra le due CONFERME, non fra i due contatti: a 30 fps
+    la conferma di rilascio aggiungeva un centinaio di ms gratis, e un pinch da
+    0.30 s veniva contato 0.40 s, cioe' oltre drag_hold_time. Risultato: il
+    tasto sinistro restava premuto invece di cliccare.
+    """
+    r = GestureRecognizer(config)
+    clock = Clock()
+    settle(r, clock)
+    hold_frames = int(30 * (config.drag_hold_time - 0.06))
+    run(r, clock, make_hand(1.0, 1.0), frames=3)
+    run(r, clock, make_hand(0.2, 1.0), frames=hold_frames)
+    events = run(r, clock, make_hand(1.0, 1.0), frames=6)
+    check("un pinch appena sotto la soglia di drag e' un click",
+          events.count(LEFT_CLICK) == 1 and DRAG_START not in events,
+          "%d fotogrammi tenuti, eventi: %r" % (hold_frames, events))
+
+
+def test_scroll_is_expressed_in_wheel_notches():
+    """
+    Lo scroll esce in SCATTI di rotellina, non in unita' grezze.
+
+    Prima l'ampiezza era `int(delta * scroll_gain * 100)`, cioe' almeno una
+    decina di unita' per evento; su Windows quelle unita' finiscono in
+    `mouse_event(dwData=n)`, dove uno scatto vale 120.
+    """
+    r = GestureRecognizer(config)
+    clock = Clock()
+    settle(r, clock)
+    amounts = []
+    y = 0.8
+    for _ in range(60):
+        y -= 0.006
+        for name, payload in r.update(
+                make_hand(1.0, 1.0, fingers=(1, 1, 0, 0), wrist=(0.5, y)),
+                (960, 540), clock.advance(1 / 30)):
+            if name == SCROLL:
+                amounts.append(payload)
+    check("lo scroll produce eventi", bool(amounts))
+    check("ogni evento resta entro scroll_max_notches",
+          all(0 < abs(a) <= config.scroll_max_notches for a in amounts),
+          "ampiezze: %r" % amounts)
+    check("lo scroll lento non si perde nell'arrotondamento",
+          sum(abs(a) for a in amounts) >= 1, "ampiezze: %r" % amounts)
+
+
+def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:
         print(test.__name__)
         test()
         print()
+    return len(tests)
+
+
+def main():
+    """
+    Esegue la suite due volte: sui valori di fabbrica e sul profilo salvato.
+
+    Il secondo giro esiste per un motivo preciso. Questi test importavano solo
+    `config`, mentre l'applicazione importa `settings_gui`, che all'import
+    sovrascrive `config` con `Profiles/settings.txt`. Erano quindi due
+    configurazioni diverse: la suite passava al 100% mentre l'applicazione
+    vera, con il profilo dell'utente, faceva partire un drag_start su un PUGNO
+    CHIUSO. Il bug era interamente visibile a questi test, che pero' non
+    guardavano i valori con cui il programma gira davvero.
+    """
+    total = 0
+
+    print("Test della macchina a stati delle gesture\n")
+    print("=" * 58)
+    print("1/2  valori di fabbrica (config.py)")
+    print("=" * 58)
+    total += _run_all()
+
+    print("=" * 58)
+    print("2/2  profilo salvato (Profiles/settings.txt)")
+    print("=" * 58)
+    import settings_gui  # noqa: F401  (l'import applica il profilo a config)
+    print()
+    total += _run_all()
 
     if FAILURES:
-        print("%d test falliti: %s" % (len(FAILURES), ", ".join(FAILURES)))
+        print("%d test falliti: %s" % (len(FAILURES), ", ".join(sorted(set(FAILURES)))))
         return 1
-    print("Tutti i %d gruppi di test sono passati." % len(tests))
+    print("Tutti i %d gruppi di test sono passati (fabbrica + profilo)." % total)
     return 0
 
 

@@ -26,6 +26,13 @@ from shared_state import set_running
 PROFILE_DIR = "Profiles"
 PROFILE_PATH = os.path.join(PROFILE_DIR, "settings.txt")
 
+# Versione del formato. Si alza solo quando cambia il SIGNIFICATO di un
+# parametro esistente, non quando se ne aggiunge uno: un valore vecchio letto
+# con l'unita' nuova e' peggio di un valore mancante, perche' nessuno se ne
+# accorge.
+#   1 -> 2  scroll_gain passa da "unita' grezze x100" a "scatti di rotellina"
+PROFILE_VERSION = 2
+
 # Valori di fabbrica, catturati all'import prima che il file utente li sovrascriva.
 _FACTORY = {key: getattr(config, key) for key in schema.persisted_keys()
             if hasattr(config, key)}
@@ -37,7 +44,7 @@ _FACTORY = {key: getattr(config, key) for key in schema.persisted_keys()
 def save_settings(path=PROFILE_PATH):
     """Scrive su file tutti i parametri dello schema."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    lines = []
+    lines = ["profile_version = %d" % PROFILE_VERSION]
     for key in schema.persisted_keys():
         if not hasattr(config, key):
             continue
@@ -72,6 +79,12 @@ def load_settings(path=PROFILE_PATH):
         print("Impossibile leggere %s: %s" % (path, exc))
         return False
 
+    version = 1
+    try:
+        version = int(float(raw.pop("profile_version", 1)))
+    except ValueError:
+        pass
+
     for key, text in raw.items():
         if key not in _FACTORY:
             continue
@@ -87,7 +100,81 @@ def load_settings(path=PROFILE_PATH):
                 setattr(config, key, text)
         except ValueError:
             print("Valore non valido per %s: %r (ignorato)" % (key, text))
+
+    _migrate(version)
+    validate_thresholds()
     return True
+
+
+def _migrate(version):
+    """Adegua un profilo scritto da una versione precedente."""
+    if version < 2:
+        # `scroll_gain` era moltiplicato per 100 e finiva in unita' grezze di
+        # `mouse_event`, dove uno scatto di rotellina vale 120: il valore
+        # vecchio, riletto in scatti, darebbe uno scroll quasi immobile.
+        if config.scroll_gain != _FACTORY["scroll_gain"]:
+            print("Profilo: scroll_gain (%.1f) e' in unita' vecchie -> %.1f scatti."
+                  % (config.scroll_gain, _FACTORY["scroll_gain"]))
+            config.scroll_gain = _FACTORY["scroll_gain"]
+
+
+# ---------------------------------------------------------------------------
+# Convalida del profilo
+# ---------------------------------------------------------------------------
+# Limiti di plausibilita' fisica, non preferenze. Un pinch e' "dita che si
+# toccano": il rapporto pollice-punta diviso la dimensione della mano vale
+# allora circa 0.1-0.3, e comunque mai piu' di mezza mano. Un profilo che dice
+# 0.82 non descrive un pinch, descrive una mano aperta.
+#
+# Serve perche' calibrate.py ha prodotto davvero un profilo cosi', e con quello
+# caricato due test della macchina a stati falliscono: un PUGNO CHIUSO emette
+# drag_start, cioe' il tasto sinistro resta premuto invece di cliccare. E'
+# esattamente il sintomo "il click sinistro non funziona".
+_LIMITS = {
+    "pinch_close_ratio": (0.15, 0.60),
+    "pinch_open_ratio": (0.25, 0.95),
+    "right_pinch_close_ratio": (0.15, 0.60),
+    "right_pinch_open_ratio": (0.25, 0.95),
+    "pinch_freeze_ratio": (0.40, 1.60),
+    "index_control_ratio": (0.55, 1.30),
+}
+
+
+def _revert(keys, reason):
+    names = [k for k in keys if getattr(config, k) != _FACTORY.get(k)]
+    if not names:
+        return
+    print("Profilo: %s" % reason)
+    for key in names:
+        print("  %s = %s -> ripristinato a %s"
+              % (key, getattr(config, key), _FACTORY[key]))
+        setattr(config, key, _FACTORY[key])
+    print("  Rilancia `python calibrate.py` per rifare la calibrazione.")
+
+
+def validate_thresholds():
+    """
+    Riporta ai valori di fabbrica le soglie del profilo che non stanno in piedi.
+
+    Un profilo sbagliato non da' errore: da' un'applicazione che si comporta
+    male in un modo che sembra un bug del riconoscitore. Meglio accorgersene
+    all'avvio, dicendo cosa e perche'.
+    """
+    fuori = [k for k, (lo, hi) in _LIMITS.items()
+             if hasattr(config, k) and not (lo <= getattr(config, k) <= hi)]
+    if fuori:
+        _revert(fuori, "valori fuori dall'intervallo fisicamente sensato.")
+
+    # L'ordine delle soglie e' quello che rende l'isteresi un'isteresi: se si
+    # inverte, il rilevatore sfarfalla invece di stabilizzare.
+    for close, open_ in (("pinch_close_ratio", "pinch_open_ratio"),
+                         ("right_pinch_close_ratio", "right_pinch_open_ratio")):
+        if getattr(config, close) >= getattr(config, open_) - 0.05:
+            _revert([close, open_],
+                    "isteresi troppo stretta o invertita fra %s e %s." % (close, open_))
+    if config.pinch_freeze_ratio <= config.pinch_open_ratio:
+        _revert(["pinch_freeze_ratio"],
+                "il congelamento deve stare sopra la soglia di apertura.")
 
 
 def reset_to_factory():
