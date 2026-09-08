@@ -171,7 +171,7 @@ Misure prese su questa macchina (Windows 11, webcam 640x480):
 | Voce | Costo |
 |---|---|
 | Modello, nessuna mano inquadrata | 22-24 ms per fotogramma |
-| Modello, complessita' 0 vs 1 | 23.9 ms contro 28.3 ms |
+| Modello, complessita' 0 vs 1 (webcam reale) | 14.9 ms contro 17.5 ms |
 | Backend webcam MSMF contro DSHOW | 30.2 fps contro 17.0 fps |
 | `cvtColor` con buffer riusato | 0.03 ms |
 | Overlay a pannello contro overlay a frame intero | 0.02 ms contro 0.34 ms |
@@ -194,6 +194,20 @@ MediaPipe ridimensiona comunque l'immagine a 192x192 al suo interno: 320x240
 costa 37.9 ms e 640x480 ne costa 35.1. Abbassare la risoluzione peggiorava
 quindi la precisione dei landmark senza far guadagnare nulla. Il default e'
 640x480.
+
+**Il default e' `model_complexity = 1`.** Costa 2.6 ms in piu' del modello
+lite, ma il tetto reale del loop e' la webcam, che consegna un fotogramma ogni
+33 ms: quei 2.6 ms non tolgono un solo fotogramma. In cambio i landmark del
+pollice durante il pinch sono molto piu' stabili, ed e' il pollice a decidere
+se un click parte. Su una macchina che non regge, il governor scende da solo a
+0 — e' la prima cosa che toglie, perche' e' anche la piu' redditizia.
+
+**Il governor riduce la qualita', non toglie funzioni.** Prima, scendendo di
+livello, disattivava `enable_zoom`: lo zoom spariva senza spiegazione, e siccome
+`max_num_hands` in `app` segue proprio `enable_zoom`, i due si rincorrevano
+ricostruendo il grafo MediaPipe. L'ordine dei livelli e' stato anche rifatto
+sulle misure: con `pollKey` la finestra di debug costa 1 ms e non e' piu' un
+risparmio, mentre il modello vale 2.6 ms, quindi il modello viene prima.
 
 **Il costo scala con le mani effettivamente rilevate, non con il tetto
 impostato.** Con nessuna mano inquadrata, `max_num_hands` a 1 o a 2 costa
@@ -255,6 +269,7 @@ python test_gestures.py    # macchina a stati, senza webcam
 python test_pipeline.py    # pipeline completa con webcam, senza toccare il mouse
 python calibrate.py        # misura le soglie sulla tua mano
 python test_calibrate.py   # procedura di calibrazione, senza webcam
+python test_zoom.py        # zoom a due mani, senza webcam e senza mouse
 ```
 
 `test_gestures.py` copre in particolare i casi che producevano falsi positivi,

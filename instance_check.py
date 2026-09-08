@@ -48,5 +48,16 @@ def release_lock():
 
 
 def is_already_running():
-    """True se un'altra istanza detiene gia' il lock."""
-    return acquire_lock() is None
+    """
+    True se un'altra istanza detiene gia' il lock.
+
+    Il lock eventualmente acquisito per sondare viene rilasciato subito: prima
+    restava aperto, e una successiva `acquire_lock()` nello stesso processo
+    trovava la porta occupata da se' stessa e concludeva che c'era un'altra
+    istanza in esecuzione.
+    """
+    sock = acquire_lock()
+    if sock is None:
+        return True
+    release_lock()
+    return False

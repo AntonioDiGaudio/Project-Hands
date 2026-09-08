@@ -8,7 +8,9 @@ mano e da come la tieni davanti alla webcam. Valori scelti a tavolino possono
 sembrare corretti e non esserlo.
 
 Come funziona: premi SPAZIO una volta sola e il programma ti guida attraverso
-tre pose, con un conto alla rovescia per ciascuna, registrando da solo.
+quattro pose, con un conto alla rovescia per ciascuna, registrando da solo. La
+registrazione di ogni posa comincia dopo `SETTLE` secondi, cosi' i fotogrammi
+in cui la mano si sta ancora portando nella posa non finiscono nelle soglie.
 
 Nota sul perche' non si tiene premuto un tasto: la prima versione chiedeva di
 tenere premuto 1/2/3 mentre `cv2.waitKey` faceva polling. Non funziona. La
@@ -27,6 +29,8 @@ from hand_tracker import HandTracker, INDEX_TIP, THUMB_TIP, MIDDLE_TIP
 from webcam_manager import WebcamManager
 
 WINDOW = "AirMouse - calibrazione"
+
+_POLL_KEY = hasattr(cv2, "pollKey")
 
 # (chiave, istruzione mostrata a schermo)
 SEQUENCE = [
@@ -417,7 +421,10 @@ def main():
             _panel(frame, lines)
             cv2.imshow(WINDOW, frame)
 
-            key = cv2.waitKey(1) & 0xFF
+            # pollKey invece di waitKey(1): stesso comportamento sui tasti,
+            # ma senza i 15.6 ms per fotogramma del ciclo di messaggi Win32
+            # (vedi app.py). Qui significa piu' campioni per posa.
+            key = (cv2.pollKey() if _POLL_KEY else cv2.waitKey(1)) & 0xFF
             if key != 255:
                 no_key_since = now
             if key == 27:

@@ -152,7 +152,20 @@ camera_buffer_size = 1           # niente frame vecchi in coda = niente latenza
 # ---------------------------------------------------------------------------
 # Modello
 # ---------------------------------------------------------------------------
-model_complexity = 0             # 0 = lite (~35 ms), 1 = full (~56 ms)
+# 0 = lite, 1 = full. Misurato su questa macchina, con la webcam reale:
+#
+#     complessita' 0    14.9 ms per fotogramma
+#     complessita' 1    17.5 ms per fotogramma   (+2.6 ms)
+#
+# Il default e' 1. Il tetto reale del loop e' la webcam, che consegna 30 fps
+# cioe' un fotogramma ogni 33 ms: 2.6 ms in piu' non tolgono un solo
+# fotogramma, e in cambio i landmark del pollice durante il pinch sono
+# nettamente piu' stabili. E' il pollice che decide se un click parte, quindi
+# quei 2.6 ms comprano precisione esattamente dove serve.
+#
+# Su una macchina che non regge, il governor delle prestazioni scende da solo
+# a 0: e' la prima cosa che toglie, perche' e' anche la piu' redditizia.
+model_complexity = 1
 min_detection_confidence = 0.6
 min_tracking_confidence = 0.5
 preferred_hand = "Right"
