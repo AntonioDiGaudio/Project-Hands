@@ -1,4 +1,7 @@
-env/  
-env2/  
-.venv/  
+env/
+env2/
+.venv/
+venv/
 __pycache__/
+*.pyc
+Profiles/settings.txt

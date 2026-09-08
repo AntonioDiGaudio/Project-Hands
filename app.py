@@ -1,363 +1,434 @@
 """
-Modulo principale dell'applicazione AirMouse.
-Gestisce l'inizializzazione e l'esecuzione dell'applicazione.
+Loop principale di AirMouse.
+
+Struttura: un thread cattura i frame, il thread principale esegue il modello e
+applica le gesture. Fra i due c'e' una casella da un elemento, quindi se il
+modello e' piu' lento della camera i frame in eccesso vengono scartati invece di
+accumularsi in coda (che e' quello che faceva sembrare il cursore in ritardo).
+
+Due misure hanno guidato la struttura del loop.
+
+**Il costo scala con le mani effettivamente rilevate, non con il tetto
+impostato.** Con nessuna mano inquadrata, `max_num_hands` a 1 o a 2 costa
+uguale (misurato: 22.7 contro 22.0 ms). Il tracciamento adattivo evita quindi
+di far girare il modello dei landmark su una seconda mano che e' inquadrata ma
+non serve, non dimezza il costo in assoluto.
+
+**Senza mani il modello costa comunque circa 22 ms per fotogramma**, perche' il
+rilevatore di palmo cerca a vuoto su tutta l'immagine; quando una mano e'
+agganciata quel passaggio viene saltato. Siccome l'applicazione sta senza mani
+per la maggior parte del tempo, abbassare il ritmo in quella fase e' il
+risparmio piu' grosso disponibile: misurato, la CPU a riposo passa da circa il
+72% di un core al 17%.
 """
 
-import cv2
 import threading
 import time
-from webcam_manager import WebcamManager
-from hand_tracker import HandTracker
-from mouse_controller import MouseController
-from settings_gui import create_settings_gui
-from shared_state import set_running, get_running
-import config
-from gesture_recognizer import GestureRecognizer
 
+import cv2
+
+import config
+from gesture_recognizer import (
+    GestureRecognizer, LEFT_CLICK, RIGHT_CLICK, DRAG_START, DRAG_END, SCROLL,
+)
+from hand_tracker import HandTracker, INDEX_TIP
+from mouse_controller import MouseController
+from perf import PerformanceGovernor
+from settings_gui import create_settings_gui
+from shared_state import get_running, set_running
+from webcam_manager import WebcamManager
+
+WINDOW_NAME = "AirMouse"
 
 
 class AirMouseApp:
-    """
-    Classe principale dell'applicazione AirMouse.
-    Gestisce l'inizializzazione e l'esecuzione dell'applicazione.
-    """
-    
+    """Applicazione AirMouse."""
+
     def __init__(self):
-        """Inizializza l'applicazione AirMouse."""
         self.webcam_manager = WebcamManager()
-        self.hand_tracker = HandTracker()
+        self.hand_tracker = None
         self.mouse_controller = MouseController(config)
-        
-        # Impostazioni specifiche
-        self.preferred_hand = "Right"
-        self.drag_mode_enabled = True
-        self.enable_right_click = True
-        
-    
-        self.slide_cooldown = 0.0
+        self.gestures = GestureRecognizer(config)
+        self.perf = PerformanceGovernor(config)
 
-        
-        self.cap = None
-        self.gesture_recognizer = GestureRecognizer(config)
+        self.grabber = None
+        self.window_open = False
 
-        # Salva le impostazioni correnti per rilevare eventuali modifiche "live"
-        self.current_camera_resolution = (config.camera_width, config.camera_height)
-        self.current_hand_params = (
-            config.model_complexity,
-            config.min_detection_confidence,
-            config.min_tracking_confidence,
-            config.use_hardware_acceleration,
-        )
+        # Stato del tracciamento adattivo delle mani.
+        self.tracking_two_hands = False
+        self._last_two_hand_probe = 0.0
+        self._last_second_hand_seen = 0.0
 
+        self._applied = self._config_snapshot()
+        self._slide_cooldown = 0.0
 
-        
+        # Throttling in idle.
+        self._last_hand_seen = 0.0
+        self._last_inference = 0.0
+        self._idle = False
+        self._last_results = None
+        self._last_hands = {"Right": None, "Left": None}
+        self._hand_streak = 0
 
-    
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _config_snapshot():
+        """Parametri che, se cambiano, richiedono di ricostruire qualcosa."""
+        return {
+            "resolution": (config.camera_width, config.camera_height),
+            "model": (config.model_complexity,
+                      config.min_detection_confidence,
+                      config.min_tracking_confidence),
+        }
+
     def initialize(self):
-        """
-        Inizializza l'applicazione selezionando la webcam e avviando la GUI delle impostazioni.
-        
-        Returns:
-            bool: True se l'inizializzazione è riuscita, False altrimenti.
-        """
-       
+        """Seleziona la webcam, avvia la GUI impostazioni e apre la camera."""
         try:
-            # Selezione della webcam
-            selected_cam = self.webcam_manager.select_camera_gui()
-            
-            # Dopo la selezione webcam, lancia la GUI delle impostazioni in un thread
-            gui_thread = threading.Thread(target=create_settings_gui)
-            gui_thread.daemon = True
+            selected = self.webcam_manager.select_camera_gui()
+            if selected is None or not get_running():
+                return False
+
+            gui_thread = threading.Thread(target=create_settings_gui, daemon=True,
+                                          name="settings-gui")
             gui_thread.start()
-            
-            # Apertura della webcam selezionata
-            self.cap = self.webcam_manager.open_camera(selected_cam)
-            self.current_camera_resolution = (config.camera_width, config.camera_height)
-            
+
+            self.grabber = self.webcam_manager.open_camera(selected)
+            self.hand_tracker = HandTracker(
+                max_num_hands=1,
+                model_complexity=config.model_complexity,
+                min_detection_confidence=config.min_detection_confidence,
+                min_tracking_confidence=config.min_tracking_confidence,
+            )
+            self._applied = self._config_snapshot()
+            print("Webcam aperta a %dx%d" % self.webcam_manager.actual_resolution())
             return True
-        except Exception as e:
-            print(f"Errore durante l'inizializzazione: {e}")
+        except SystemExit:
             return False
-    
+        except Exception as exc:
+            print("Errore durante l'inizializzazione: %s" % exc)
+            return False
+
+    # ------------------------------------------------------------------
     def run(self):
-        """Esegue il ciclo principale dell'applicazione."""
-        if self.cap is None:
-            print("Webcam non inizializzata")
+        if self.grabber is None or self.hand_tracker is None:
+            print("Applicazione non inizializzata")
             return
-        
 
+        last_loop = time.perf_counter()
 
-
-        frame_counter = 0
-        # Ridotto per elaborare ogni fotogramma
-        skip_frames = 1
-        last_frame_time = 0
-        # Ciclo principale per il riconoscimento della mano e il movimento del cursore
         while get_running():
-            current_time = time.time()
-
-            # Verifica se qualche parametro di configurazione è cambiato
-            self.check_config_updates()
-
-            # frame skipping
-            frame_counter += 1
-            if frame_counter % skip_frames != 0:
-                continue  # Salta il frame
-
-            # controllo sugli FPS
-            frame_interval = 1.0 / config.target_fps
-            if current_time - last_frame_time < frame_interval:
-                time.sleep(max(0, frame_interval - (current_time - last_frame_time)))
-                continue  # Salta questo frame
-            last_frame_time = current_time
-           
-
-          
-            
-            ret, frame = self.cap.read()
-            
-            if not ret:
+            ok, frame, _ = self.grabber.read(timeout=0.5)
+            if not ok:
                 continue
-            
+
+            now = time.perf_counter()
+            self.perf.note_frame(now - last_loop)
+            last_loop = now
+
+            self._apply_config_changes()
+
             frame = cv2.flip(frame, 1)
-            frame, results = self.hand_tracker.find_hands(frame, draw=True) # Debug, metti true per vedere i landmark
-            
-            h, w, _ = frame.shape
-            hands_data = self.hand_tracker.find_positions(frame, results)
-            
-            right_hand_points = hands_data.get("Right")
-            left_hand_points = hands_data.get("Left")
-            
-            right_finger_state = self.hand_tracker.fingers_up(right_hand_points)
-            left_finger_state = self.hand_tracker.fingers_up(left_hand_points)
-            
-            # Aggiungi etichette per identificare le mani
-            # if right_hand_points:
-            #     cv2.putText(frame, "Destra", (right_hand_points[0][0], right_hand_points[0][1] - 10), 
-            #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            # if left_hand_points:
-            #     cv2.putText(frame, "Sinistra", (left_hand_points[0][0], left_hand_points[0][1] - 10), 
-            #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-            
-            # Gestione della mano destra (controllo del mouse)
-            if right_hand_points and right_finger_state and self.preferred_hand == "Right":
-                index_up, middle_up, ring_up, pinky_up = right_finger_state
-                ix, iy = right_hand_points[8]  # Indice
-                px, py = right_hand_points[4]  # Pollice
-                
-                # Muovi il cursore
-                dist = self.hand_tracker.distance_between_points((ix, iy), (px, py))
 
-                # Controllo blocco cursore durante il gesto di click
-                index_up, middle_up, ring_up, pinky_up = right_finger_state
+            inferred = self._should_infer(now)
+            if inferred:
+                t0 = time.perf_counter()
+                results = self.hand_tracker.process(frame)
+                self.perf.note_inference(time.perf_counter() - t0)
+                self._last_inference = now
+                self._last_results = results
 
-                # blocca il cursore se l’anulare è abbassato (ring_up == 0)
-                if ring_up == 1:
-                    self.mouse_controller.move_cursor(ix, iy, w, h)
+                hands = self.hand_tracker.observe(results)
+                self._last_hands = hands
+                if any(h is not None for h in hands.values()):
+                    self._last_hand_seen = now
 
-                # # Gestione del click (sempre eseguita)
-                # self.mouse_controller.handle_click(dist, self.drag_mode_enabled, self.enable_right_click, pinky_up)
-
-                
-                # Gestione del click
-                dist = self.hand_tracker.distance_between_points((ix, iy), (px, py))
-                self.mouse_controller.handle_click(dist, self.drag_mode_enabled, self.enable_right_click, pinky_up)
-            
-            # Gestione della mano sinistra (zoom e slide)
-            if left_hand_points and left_finger_state:
-                # Verifica se il palmo è aperto (almeno 3 dita alzate)
-                left_palm_closed = sum(left_finger_state) == 0
-                
-                # Visualizza lo stato delle dita della mano sinistra
-                # finger_status = "Dita SX: " + "".join(["↑" if f else "↓" for f in left_finger_state])
-                # cv2.putText(frame, finger_status, (10, 150), 
-                #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                
-                # Visualizza se il palmo è considerato aperto
-                # palm_status = "Palmo aperto" if left_palm_closed else "Palmo chiuso"
-                # cv2.putText(frame, palm_status, (10, 170), 
-                #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                
-                # Gestione dello slide con il palmo aperto
-                if left_palm_closed:
-                    # Coordinate del palmo (punto 0)
-                    palm_x, palm_y = left_hand_points[0]
-                    
-                    # Visualizza coordinate
-                    # cv2.putText(frame, f"Pugno: ({palm_x}, {palm_y})", (10, 210),
-                    #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                    
-                    # Determina la direzione in base alla posizione
-                    direction = "center"
-                    margin_x = w * 0.3
-                    margin_y = h * 0.3
-                    
-                    if palm_y < margin_y:
-                        direction = "up"
-                    elif palm_y > h - margin_y:
-                        direction = "down"
-                    elif palm_x < margin_x:
-                        direction = "left"
-                    elif palm_x > w - margin_x:
-                        direction = "right"
-                    
-                    if direction != "center" and time.time() - self.slide_cooldown >= config.slide_cooldown_time:
-                        #debug
-                        # print("Slide cooldown attivo con valore:", config.slide_cooldown_time)
-                        # print("Direzione:", direction)
-                        self.mouse_controller.perform_slide(direction)
-                        self.slide_cooldown = time.time()
-                        # cv2.putText(frame, f"Slide: {direction}", (10, 30),
-                        #             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            
-            # Gestione dello zoom (richiede entrambe le mani)
-            if right_hand_points and left_hand_points and right_finger_state and left_finger_state:
-                # Verifica se è attiva la gesture per lo zoom (solo indici alzati)
-                zoom_gesture_active = self.hand_tracker.check_zoom_gesture(right_finger_state, left_finger_state)
-                
-                # Indici delle due mani
-                right_index = right_hand_points[8]
-                left_index = left_hand_points[8]
-                
-                # Calcola la distanza tra gli indici
-                current_distance = self.hand_tracker.distance_between_points(right_index, left_index)
-                
-                # Visualizza se la gesture di zoom è attiva
-                # zoom_status = "Zoom gesture: " + ("Attiva" if zoom_gesture_active else "Inattiva")
-                # cv2.putText(frame, zoom_status, (10, 230), 
-                #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                
-                # Visualizza la distanza sullo schermo
-                # cv2.line(frame, right_index, left_index, (0, 255, 0), 2)
-                # cv2.putText(frame, f"Dist: {int(current_distance)}", (10, 60), 
-                #             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                
-                # Gestione dello zoom
-                zoom_performed, zoom_direction = self.mouse_controller.handle_zoom(current_distance, zoom_gesture_active)
-                
-                # if zoom_performed and zoom_direction:
-                #     cv2.putText(frame, f"Zoom {zoom_direction}", (10, 90), 
-                #                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                self._handle_hands(hands, now)
+                self._update_hand_count(hands, now)
             else:
-                # Reset delle variabili se non ci sono mani rilevate
-                self.mouse_controller.last_zoom_distance = None
-                self.mouse_controller.zoom_distances = []
-            
-            # Aggiungi un overlay con i valori di configurazione attuali
-            overlay = frame.copy()
-            # Sfondo semi-trasparente per migliorare la leggibilità
-            cv2.rectangle(overlay, (10, 10), (300, 350), (0, 0, 0), -1)
-            
-            # Aggiungi i valori di configurazione
-            config_values = [
-                f"Sensibilita': {config.alpha_smooth:.2f}",
-                f"Velocità cursore: {config.cursor_speed_multiplier:.2f}",
-                f"Overscan X: {config.overscan_x:.2f}",
-                f"Overscan Y: {config.overscan_y:.2f}",
-                f"Soglia click: {config.click_distance_threshold:.1f}",
-                f"Cooldown click: {config.click_cooldown:.2f}s",
-                f"Soglia zoom: {config.zoom_threshold:.1f}",
-                f"Cooldown zoom: {config.zoom_cooldown_time:.2f}s",
-                f"Smoothing zoom: {config.zoom_smooth_factor:.1f}",
-                f"Distanza max zoom: {config.zoom_max_distance:.1f}",
-                f"Cooldown slide: {config.slide_cooldown_time:.3f}s",
-                f"Zona morta: {config.deadzone_threshold}",
-                f"Confidenza rilevamento: {config.min_detection_confidence:.2f}",
-                f"Confidenza tracking: {config.min_tracking_confidence:.2f}",
-                f"Complessita' modello: {config.model_complexity}",
-                f"Risoluzione: {config.camera_width}x{config.camera_height}",
-                f"Accel. hardware: {'Sì' if config.use_hardware_acceleration else 'No'}"
-            ]
-            
-            # Disegna i valori
-            for i, text in enumerate(config_values):
-                cv2.putText(overlay, text, (15, 30 + i * 20), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            
-            # Applica l'overlay con trasparenza
-            alpha = 0.7  # Trasparenza dell'overlay
-            cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-            
-            # Debug
-            cv2.imshow("Hand Mouse Control", frame)
-            time.sleep(0.005)
-            
-            # Controllo chiusura con ESC
-            key = cv2.waitKey(1)
-            if key == 27:  # ESC key
-                set_running(False)
-            
-            if not get_running():
+                # Fotogramma saltato in modalita' risparmio: nessuna gesture
+                # viene valutata, quindi non puo' nascerne un evento spurio.
+                results = None
+                hands = self._last_hands
+
+            if config.show_debug_window:
+                if not self._render(frame, results, hands):
+                    break
+            elif self.window_open:
+                self._close_window()
+
+            self.perf.tick(self.hand_tracker)
+
+            # Tetto sugli fps: senza, su una macchina veloce il loop girerebbe
+            # a vuoto bruciando CPU per nulla.
+            budget = 1.0 / max(1.0, float(config.target_fps))
+            elapsed = time.perf_counter() - now
+            if elapsed < budget:
+                time.sleep(budget - elapsed)
+
+    # ------------------------------------------------------------------
+    def _should_infer(self, now):
+        """
+        Decide se eseguire il modello su questo fotogramma.
+
+        Si salta solo quando non si vede una mano da un po'. In quella fase il
+        modello sta spendendo circa 22 ms per fotogramma per cercare un palmo
+        che non c'e', e abbassare il ritmo a `idle_detect_fps` riduce la CPU a
+        riposo di circa quattro volte. Appena una mano compare si torna subito
+        a pieno ritmo: il ritardo massimo di aggancio e' un intervallo di idle.
+        """
+        if not config.idle_throttle:
+            self._idle = False
+            return True
+
+        idle = (now - self._last_hand_seen) > config.idle_after_seconds
+        if idle != self._idle:
+            self._idle = idle
+        if not idle:
+            return True
+
+        interval = 1.0 / max(1.0, float(config.idle_detect_fps))
+        return (now - self._last_inference) >= interval
+
+    def _handle_hands(self, hands, now):
+        """Applica le gesture della mano dominante e, se attivo, lo zoom."""
+        dominant_label = config.preferred_hand if config.preferred_hand in hands else "Right"
+        hand = hands.get(dominant_label)
+        other = hands.get("Left" if dominant_label == "Right" else "Right")
+
+        if hand is None:
+            self._hand_streak = 0
+            for name, payload in self.gestures.hand_lost(now):
+                self._dispatch(name, payload)
+            self.mouse_controller.reset_cursor_filter()
+        else:
+            self._hand_streak += 1
+            nx, ny = hand.point(INDEX_TIP)
+            # prepare() per primo: calcola i rapporti di pinch su QUESTO
+            # fotogramma, cosi' il congelamento del cursore scatta subito e non
+            # con un fotogramma di ritardo.
+            self.gestures.prepare(hand, now)
+            # Una rilevazione isolata di un solo fotogramma e' quasi sempre un
+            # falso positivo del modello. Muovere il cursore su quel dato lo
+            # farebbe teletrasportare: si aspetta che l'aggancio sia confermato.
+            engaging = self._hand_streak < config.cursor_engage_frames
+            frozen = engaging or self.gestures.cursor_frozen()
+            pos = self.mouse_controller.update_cursor(nx, ny, now, frozen=frozen)
+            for name, payload in self.gestures.update(hand, pos, now):
+                self._dispatch(name, payload)
+
+        self._handle_zoom(hand, other, now)
+        self._handle_slide(other, now)
+
+    def _dispatch(self, name, payload):
+        mc = self.mouse_controller
+        if name == LEFT_CLICK:
+            mc.left_click()
+        elif name == RIGHT_CLICK:
+            mc.right_click()
+        elif name == DRAG_START:
+            mc.drag_start()
+        elif name == DRAG_END:
+            mc.drag_end()
+        elif name == SCROLL:
+            mc.scroll(payload)
+
+    def _handle_zoom(self, hand, other, now):
+        if not config.enable_zoom or hand is None or other is None:
+            self.mouse_controller.handle_zoom(0.0, False, now)
+            return
+        # Lo zoom richiede una posa esplicita: solo gli indici estesi su
+        # entrambe le mani. Cosi' non parte mentre si usa il mouse normalmente.
+        active = bool(hand.fingers[0] and other.fingers[0]
+                      and not hand.fingers[1] and not other.fingers[1])
+        if not active:
+            self.mouse_controller.handle_zoom(0.0, False, now)
+            return
+
+        ax, ay = hand.point(INDEX_TIP)
+        bx, by = other.point(INDEX_TIP)
+        # Normalizzato sulla media delle due dimensioni di mano.
+        scale = (hand.scale + other.scale) * 0.5
+        ratio = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5 / max(scale, 1e-6)
+        self.mouse_controller.handle_zoom(ratio, True, now)
+
+    def _handle_slide(self, other, now):
+        if not config.enable_slide or other is None:
+            return
+        # Pugno chiuso della mano non dominante vicino a un bordo.
+        if any(other.fingers):
+            return
+        if now - self._slide_cooldown < config.slide_cooldown_time:
+            return
+        px, py = other.point(0)
+        margin = config.slide_margin
+        direction = None
+        if py < margin:
+            direction = "up"
+        elif py > 1.0 - margin:
+            direction = "down"
+        elif px < margin:
+            direction = "left"
+        elif px > 1.0 - margin:
+            direction = "right"
+        if direction:
+            self.mouse_controller.perform_slide(direction)
+            self._slide_cooldown = now
+
+    # ------------------------------------------------------------------
+    def _update_hand_count(self, hands, now):
+        """
+        Tiene il tetto di mani allineato alle funzioni attive.
+
+        Qui c'era un sondaggio periodico che alternava fra 1 e 2 mani per
+        scoprire se ce ne fosse una seconda. E' stato tolto: `reconfigure`
+        ricostruisce il grafo MediaPipe, misurato circa 25 ms, e soprattutto
+        azzera lo stato di tracciamento, quindi produceva uno scatto visibile
+        del cursore a ogni sondaggio. Costava piu' di quanto rendesse.
+
+        Non serve nemmeno: il costo del modello scala con le mani
+        effettivamente rilevate, non con il tetto impostato (misurato: senza
+        mani inquadrate, 1 e 2 mani costano uguale). Basta quindi impostare il
+        tetto una volta e lasciarlo stare.
+        """
+        target = 2 if config.enable_zoom else 1
+        if self.hand_tracker.max_num_hands != target:
+            self.hand_tracker.reconfigure(max_num_hands=target)
+            self.tracking_two_hands = target == 2
+
+    # ------------------------------------------------------------------
+    def _apply_config_changes(self):
+        """Recepisce le modifiche fatte a caldo dalla GUI impostazioni."""
+        snapshot = self._config_snapshot()
+        if snapshot["resolution"] != self._applied["resolution"]:
+            try:
+                self.grabber = self.webcam_manager.open_camera()
+            except Exception as exc:
+                print("Errore riapertura camera: %s" % exc)
+            self._applied["resolution"] = snapshot["resolution"]
+
+        if snapshot["model"] != self._applied["model"]:
+            complexity, det, track = snapshot["model"]
+            self.hand_tracker.reconfigure(
+                model_complexity=complexity,
+                min_detection_confidence=det,
+                min_tracking_confidence=track,
+            )
+            self._applied["model"] = snapshot["model"]
+
+    # ------------------------------------------------------------------
+    def _render(self, frame, results, hands):
+        """
+        Disegna la finestra di debug. Restituisce False per uscire.
+
+        `results` e' None sui fotogrammi in cui l'inferenza e' stata saltata:
+        li' non si disegna nulla, perche' ridisegnare i landmark del fotogramma
+        precedente mostrerebbe una mano ferma dove non c'e' piu'.
+        """
+        if config.draw_landmarks and results is not None:
+            self.hand_tracker.draw(frame, results)
+        if config.overlay_enabled:
+            self._draw_overlay(frame, hands)
+
+        cv2.imshow(WINDOW_NAME, frame)
+        self.window_open = True
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27:  # ESC
+            set_running(False)
+            return False
+        if key in (ord("d"), ord("D")):
+            config.draw_landmarks = not config.draw_landmarks
+        elif key in (ord("o"), ord("O")):
+            config.overlay_enabled = not config.overlay_enabled
+        elif key in (ord("h"), ord("H")):
+            config.show_debug_window = False
+        return True
+
+    def _draw_overlay(self, frame, hands):
+        """
+        Overlay leggero.
+
+        Niente `frame.copy()` + `addWeighted` a piena risoluzione come prima:
+        quello costava una copia e una fusione dell'intero frame a ogni
+        fotogramma. Qui si fonde solo il rettangolo del pannello.
+        """
+        g = self.gestures
+        lines = [
+            "%s  |  %.0f fps  |  %.1f ms modello" % (
+                g.status_text(), self.perf.fps, self.perf.inference_ms),
+            "pinch sx %.2f (soglia %.2f)" % (g.left_ratio, config.pinch_close_ratio),
+            "pinch dx %.2f (soglia %.2f)" % (g.right_ratio, config.right_pinch_close_ratio),
+            "velocita' %.0f px/s (max %.0f)" % (g.hand_speed, config.max_gesture_speed),
+            "mani tracciate: %d%s" % (
+                self.hand_tracker.max_num_hands,
+                "  [IDLE]" if self._idle else ""),
+            "qualita': %s" % self.perf.level_name(),
+            "ESC esci | D landmark | O overlay | H nascondi",
+        ]
+        hand = hands.get(config.preferred_hand) or hands.get("Right")
+        if hand is not None:
+            lines.insert(1, "dita %s  conf %.2f" % (
+                "".join("^" if f else "_" for f in hand.fingers), hand.score))
+
+        pad = 8
+        line_h = 18
+        w = min(330, frame.shape[1] - 20)
+        h = min(pad * 2 + line_h * len(lines), frame.shape[0] - 20)
+
+        panel = frame[10:10 + h, 10:10 + w]
+        if panel.size:
+            # Scurisce solo la porzione del pannello. La versione precedente
+            # copiava l'intero frame e ci applicava addWeighted sopra: 0.34 ms
+            # per fotogramma contro 0.02 ms di questa.
+            cv2.addWeighted(panel, 0.25, panel, 0.0, 0.0, dst=panel)
+
+        colour = (90, 220, 90) if not g.gated_reason else (90, 170, 240)
+        for i, text in enumerate(lines):
+            y = 10 + pad + 12 + i * line_h
+            if y > frame.shape[0] - 4:
                 break
+            cv2.putText(frame, text, (10 + pad, y), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.42, colour if i == 0 else (230, 230, 230), 1,
+                        cv2.LINE_AA)
 
-    def check_config_updates(self):
-        """Ricarica camera o tracker se i parametri sono cambiati."""
-        # Controllo risoluzione webcam
-        current_res = (config.camera_width, config.camera_height)
-        if current_res != self.current_camera_resolution:
-            self.reload_camera()
-            self.current_camera_resolution = current_res
-
-        # Controllo parametri HandTracker
-        current_hand = (
-            config.model_complexity,
-            config.min_detection_confidence,
-            config.min_tracking_confidence,
-            config.use_hardware_acceleration,
-        )
-        if current_hand != self.current_hand_params:
-            self.reload_hand_tracker()
-            self.current_hand_params = current_hand
-
-    def reload_camera(self):
-        """Riapre la webcam con la nuova risoluzione."""
+    def _close_window(self):
         try:
-            self.webcam_manager.release_camera()
-            self.cap = self.webcam_manager.open_camera(self.webcam_manager.selected_camera)
-            self.current_camera_resolution = (config.camera_width, config.camera_height)
-        except Exception as e:
-            print(f"Errore riapertura camera: {e}")
-
-    def reload_hand_tracker(self):
-        """Ricrea l'oggetto HandTracker con le impostazioni attuali."""
-        try:
-            self.hand_tracker.hands.close()
+            cv2.destroyWindow(WINDOW_NAME)
         except Exception:
             pass
-        self.hand_tracker = HandTracker(
-            model_complexity=config.model_complexity,
-            min_detection_confidence=config.min_detection_confidence,
-            min_tracking_confidence=config.min_tracking_confidence,
-        )
-    
+        self.window_open = False
+
+    # ------------------------------------------------------------------
     def terminate(self):
-        """Chiude l'applicazione e rilascia le risorse."""
+        """Rilascia tutto. Non deve lasciare tasti del mouse premuti."""
+        try:
+            self.mouse_controller.reset()
+        except Exception:
+            pass
+        try:
+            self.webcam_manager.release_camera()
+        except Exception:
+            pass
+        if self.hand_tracker is not None:
+            self.hand_tracker.close()
         try:
             cv2.destroyAllWindows()
-        except:
+        except Exception:
             pass
-        
-        try:
-            if self.cap is not None:
-                self.webcam_manager.release_camera()
-        except:
-            pass
-        
         set_running(False)
 
 
 def main():
-    """Funzione principale per avviare l'applicazione."""
     app = AirMouseApp()
-    if app.initialize():
-        try:
-            app.run()
-        except Exception as e:
-            print(f"Errore durante l'esecuzione: {e}")
-        finally:
-            app.terminate()
-    else:
+    if not app.initialize():
         print("Impossibile inizializzare l'applicazione")
+        return
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        app.terminate()
 
 
 if __name__ == "__main__":

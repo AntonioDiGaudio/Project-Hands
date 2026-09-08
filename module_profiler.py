@@ -1,47 +1,67 @@
-"""Utility per monitorare l'uso della CPU per modulo.
+"""
+Profiler per modulo, attivabile con `python main.py --profile`.
 
-Questo modulo avvia un profiler che calcola il tempo di CPU speso in ogni modulo
-Python. Ogni ``interval`` secondi stampa a video i moduli che hanno consumato
-più tempo nell'intervallo precedente.
+Due problemi della versione precedente sono stati corretti:
+
+* partiva sempre. `sys.setprofile` intercetta ogni chiamata Python del
+  processo: e' uno strumento di diagnosi, non qualcosa da lasciare acceso in
+  esecuzione normale.
+* il dizionario dei frame in corso non veniva mai ripulito. Un frame che non
+  emette l'evento "return" (eccezioni, generatori abbandonati) restava dentro
+  per sempre: memoria che cresce senza limite in un processo a esecuzione lunga.
 """
 
 import sys
-import time
 import threading
+import time
 from collections import defaultdict
-from types import FrameType
+
+_started = False
 
 
-def start(interval: float = 2.0, top_n: int = 5) -> None:
-    """Avvia il profiler per monitorare l'uso della CPU per modulo.
+def start(interval=2.0, top_n=6):
+    """Avvia il profiler. Chiamate successive alla prima non fanno nulla."""
+    global _started
+    if _started:
+        return
+    _started = True
 
-    Args:
-        interval: intervallo in secondi tra un report e il successivo.
-        top_n: numero di moduli da visualizzare nel report.
-    """
+    module_times = defaultdict(float)
+    call_times = {}
+    lock = threading.Lock()
 
-    module_times: defaultdict[str, float] = defaultdict(float)
-    call_times: dict[FrameType, float] = {}
-
-    def profiler(frame: FrameType, event: str, arg) -> None:
+    def profiler(frame, event, arg):
         if event == "call":
+            # Cap di sicurezza: se i frame orfani si accumulano si riparte da
+            # zero invece di far crescere la memoria all'infinito.
+            if len(call_times) > 20000:
+                call_times.clear()
             call_times[frame] = time.perf_counter()
         elif event == "return":
-            start = call_times.pop(frame, None)
-            if start is not None:
-                module = frame.f_globals.get("__name__", "")
-                duration = time.perf_counter() - start
-                module_times[module] += duration
+            start_time = call_times.pop(frame, None)
+            if start_time is not None:
+                name = frame.f_globals.get("__name__", "?")
+                with lock:
+                    module_times[name] += time.perf_counter() - start_time
 
-    def reporter() -> None:
-        while True:
+    def reporter():
+        while _started:
             time.sleep(interval)
+            with lock:
+                ranked = sorted(module_times.items(), key=lambda kv: kv[1],
+                                reverse=True)[:top_n]
+                module_times.clear()
+            if not ranked:
+                continue
             print("\n--- CPU per modulo (ultimi %.1fs) ---" % interval)
-            ranked = sorted(module_times.items(), key=lambda x: x[1], reverse=True)
-            for mod, t in ranked[:top_n]:
-                print(f"{mod}: {t:.4f}s")
-            module_times.clear()
+            for module, seconds in ranked:
+                print("  %-28s %7.1f ms" % (module, seconds * 1000))
 
     sys.setprofile(profiler)
-    t = threading.Thread(target=reporter, daemon=True)
-    t.start()
+    threading.Thread(target=reporter, daemon=True, name="profiler").start()
+
+
+def stop():
+    global _started
+    _started = False
+    sys.setprofile(None)

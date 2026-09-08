@@ -1,42 +1,164 @@
 """
-Modulo di configurazione per l'applicazione AirMouse.
-Contiene i parametri configurabili per il controllo del mouse e il riconoscimento dei gesti.
+Configurazione di AirMouse.
+
+Nota sulle unita' di misura:
+
+* Le soglie delle gesture NON sono in pixel ma in **frazioni della dimensione
+  della mano** (distanza polso -> nocca del medio). Cosi' una gesture funziona
+  identica che la mano sia a 30 cm o a 1 m dalla webcam: e' la causa numero uno
+  di falsi positivi nelle versioni precedenti.
+* Le soglie del cursore (deadzone, travel) sono in pixel di schermo.
+* I tempi sono in secondi.
 """
 
-# Parametri per il controllo del mouse
-# Aumentato per rendere il movimento del cursore più fluido
-alpha_smooth = 0.4  # Fattore di smoothing per il movimento del cursore
-overscan_x = 2     # Fattore di overscan orizzontale
-overscan_y = 2     # Fattore di overscan verticale
-cursor_speed_multiplier = 1.0  # Moltiplicatore di velocità del cursore
+# ---------------------------------------------------------------------------
+# Cursore
+# ---------------------------------------------------------------------------
+overscan_x = 1.6                 # quanto "allarga" l'area utile della camera
+overscan_y = 1.6
+cursor_speed_multiplier = 1.0
+deadzone_threshold = 2.0         # px schermo: sotto questo delta il cursore non si muove
 
-# Parametri per il riconoscimento dei gesti
-click_cooldown = 0.1  # Tempo di attesa tra clic consecutivi
-click_distance_threshold = 25  # Soglia di distanza per il riconoscimento del clic
+# Filtro One Euro: e' il filtro che decide fluidita' vs latenza.
+#   min_cutoff piu' basso  -> piu' stabile da fermo, piu' molle in movimento
+#   beta       piu' alto   -> segue meglio i movimenti veloci
+one_euro_min_cutoff = 1.2
+one_euro_beta = 0.02
+one_euro_d_cutoff = 1.0
 
-# Parametri per lo zoom
-zoom_threshold = 100  # Soglia per il riconoscimento dello zoom
-zoom_max_distance = 160  # Distanza massima per lo zoom
-zoom_cooldown_time = 0.8  # Cooldown per lo zoom, tempo in secondi tra due zoom consecutivi
-zoom_smooth_factor = 5  # Numero di valori da mediare per lo smoothing della distanza
+# Compatibilita' con la vecchia GUI (mappato su one_euro_min_cutoff).
+alpha_smooth = 0.4
 
-# Parametri per lo slide
-slide_cooldown_time = 0.01  # Tempo di cooldown per lo slide
+# ---------------------------------------------------------------------------
+# Gesture: soglie normalizzate sulla dimensione della mano
+# ---------------------------------------------------------------------------
+# Pinch pollice+indice = click sinistro / drag.
+pinch_close_ratio = 0.45         # sotto  -> pinch chiuso
+pinch_open_ratio = 0.70          # sopra  -> pinch aperto (isteresi Schmitt)
 
-# Nuovi parametri
-use_hardware_acceleration = False  # Accelerazione hardware
-camera_width = 320  # Larghezza della risoluzione della camera
-camera_height = 240  # Altezza della risoluzione della camera
-model_complexity = 0  # Complessità del modello (0 = leggero, 1 = pesante)
-min_detection_confidence = 0.8  # Confidenza minima per il rilevamento delle mani
-min_tracking_confidence = 0.8  # Confidenza minima per il tracciamento delle mani
+# Pinch pollice+medio = click destro.
+right_pinch_close_ratio = 0.45
+right_pinch_open_ratio = 0.70
 
+# Un pinch deve restare stabile per N frame prima di essere accettato / rilasciato.
+pinch_confirm_frames = 2
+pinch_release_frames = 3
 
+# Distinzione click vs drag: sotto drag_hold_time e' un click, sopra e' un drag.
+drag_hold_time = 0.35
+click_max_travel = 45.0          # px schermo: se il cursore vaga di piu', non e' un click
+click_cooldown = 0.25
+right_click_cooldown = 0.45
 
-deadzone_threshold = 7  # Zona morta, con cui si considera il movimento del mouse come nullo
-# Maggior fps per una maggiore reattività
-target_fps = 30
-# Parametri per rendere più stabile il trascinamento
-drag_release_frames = 5  # Numero di fotogrammi consecutivi oltre la soglia per rilasciare il drag
-drag_release_multiplier = 2.0  # Moltiplicatore della soglia per riconoscere il rilascio del drag
+# ---------------------------------------------------------------------------
+# Anti falsi positivi
+# ---------------------------------------------------------------------------
+require_pointing_pose = True     # nessuna gesture se la mano non e' in posa di controllo
 
+# Soglia della posa di controllo, misurata come distanza punta-nocca
+# dell'indice divisa per la dimensione della mano.
+#
+#     indice teso      ~1.3 - 1.5
+#     indice che pinza ~0.9 - 1.2
+#     pugno chiuso     ~0.4 - 0.6
+#
+# La soglia va nel mezzo fra pinch e pugno: deve lasciar passare il pinch
+# (altrimenti il click si annulla da solo mentre lo fai) e fermare il pugno.
+# Usa `python calibrate.py` per leggere i valori reali della tua mano.
+index_control_ratio = 0.75
+
+# Il cursore si congela quando il pinch scende sotto questa soglia. Va tenuta
+# piu' alta di pinch_open_ratio: cosi' il blocco scatta gia' durante
+# l'avvicinamento delle dita, prima che la punta dell'indice (che e' il
+# cursore) si sia spostata in modo percepibile.
+pinch_freeze_ratio = 0.95
+min_handedness_score = 0.70      # scarta le mani riconosciute con poca confidenza
+hand_reacquire_grace = 0.25      # s di silenzio dopo che una mano ricompare
+max_gesture_speed = 2500.0       # px schermo/s: sopra, i click sono ignorati
+finger_extend_ratio = 1.12       # dito esteso se dist(tip,polso) > ratio * dist(pip,polso)
+finger_retract_ratio = 1.02      # isteresi sulla stessa misura
+finger_confirm_frames = 2
+teleport_reset_ratio = 0.45      # salto > 45% del frame -> riaggancio, gesture inibite
+cursor_engage_frames = 3         # fotogrammi consecutivi con la mano prima di muovere il cursore
+
+# ---------------------------------------------------------------------------
+# Scroll a due dita (indice + medio estesi, movimento verticale)
+# ---------------------------------------------------------------------------
+enable_scroll = True
+scroll_deadzone = 0.012          # frazione di altezza frame prima di scrollare
+scroll_gain = 9.0
+scroll_cooldown = 0.03
+
+# ---------------------------------------------------------------------------
+# Zoom a due mani (indici estesi su entrambe le mani)
+# ---------------------------------------------------------------------------
+enable_zoom = True
+zoom_trigger_ratio = 0.18        # variazione relativa della distanza per far scattare uno zoom
+zoom_cooldown_time = 0.35
+zoom_smooth_factor = 5
+
+# ---------------------------------------------------------------------------
+# Slide (palmo chiuso della mano non dominante -> frecce direzionali)
+# ---------------------------------------------------------------------------
+enable_slide = False             # off: e' la gesture piu' soggetta a falsi positivi
+slide_cooldown_time = 0.40
+slide_margin = 0.28              # frazione del frame che conta come bordo
+
+# ---------------------------------------------------------------------------
+# Camera
+# ---------------------------------------------------------------------------
+# 640x480 e' il default: MediaPipe ridimensiona comunque a 192x192 internamente,
+# quindi abbassare la risoluzione NON fa guadagnare fps ma peggiora la precisione
+# dei landmark (misurato: 320x240 -> 37.9 ms/frame, 640x480 -> 35.1 ms/frame).
+camera_width = 640
+camera_height = 480
+camera_backend = "auto"          # "auto" | "msmf" | "dshow" | "v4l2" | "any"
+camera_fourcc = "MJPG"           # aiuta molto su USB 2.0 / Raspberry Pi
+camera_buffer_size = 1           # niente frame vecchi in coda = niente latenza
+
+# ---------------------------------------------------------------------------
+# Modello
+# ---------------------------------------------------------------------------
+model_complexity = 0             # 0 = lite (~35 ms), 1 = full (~56 ms)
+min_detection_confidence = 0.6
+min_tracking_confidence = 0.5
+preferred_hand = "Right"
+
+# Il tetto di mani segue semplicemente enable_zoom: 2 se lo zoom serve, 1
+# altrimenti. Non c'e' nessun sondaggio periodico, perche' ricostruire il grafo
+# MediaPipe costa circa 25 ms e azzera il tracciamento (scatto visibile del
+# cursore), e perche' il costo del modello scala con le mani effettivamente
+# rilevate e non con questo tetto.
+
+# ---------------------------------------------------------------------------
+# Performance
+# ---------------------------------------------------------------------------
+target_fps = 60                  # tetto del loop; il collo di bottiglia reale e' il modello
+auto_performance = True          # degrada da solo su CPU deboli
+
+# Throttling in assenza di mani.
+#
+# Misurato: con nessuna mano inquadrata il modello costa comunque circa 22 ms
+# per fotogramma, perche' il rilevatore di palmo gira a vuoto su tutta
+# l'immagine. Quando invece una mano e' agganciata MediaPipe salta il
+# rilevatore e usa solo il modello dei landmark, che e' piu' leggero.
+#
+# Siccome l'applicazione sta ferma senza mani per la maggior parte del tempo,
+# rallentare il ritmo in quella fase e' il singolo risparmio piu' grosso: la
+# CPU a riposo scende di circa 4 volte. Appena una mano compare si torna
+# immediatamente a pieno ritmo, quindi il ritardo di aggancio resta impercettibile.
+idle_throttle = True
+idle_after_seconds = 1.0         # dopo quanto silenzio si entra in modalita' risparmio
+idle_detect_fps = 8              # ritmo del rilevamento quando non c'e' nessuna mano
+perf_min_detect_fps = 12         # sotto questa soglia riduce la qualita'
+perf_target_headroom = 0.85      # frazione del budget frame da non superare
+show_debug_window = True
+draw_landmarks = True
+overlay_enabled = True
+enable_profiler = False          # sys.setprofile: solo per diagnosi, rallenta tutto
+
+# ---------------------------------------------------------------------------
+# Modalita'
+# ---------------------------------------------------------------------------
+drag_mode_enabled = True
+enable_right_click = True
