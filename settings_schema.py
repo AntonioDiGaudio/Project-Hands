@@ -48,6 +48,14 @@ SECTIONS = [
               "Come sopra ma per pollice+medio, che fa il click destro."),
         Param("right_pinch_open_ratio", "Apertura pinch (click dx)", "float", 0.30, 1.20, 0.01,
               "Apertura del pinch del click destro."),
+        Param("pinch_approach_drop", "Sensibilita' blocco cursore", "float", 0.05, 0.60, 0.01,
+              "Di quanto devono essersi avvicinate le dita perche' il cursore si "
+              "blocchi. Il blocco richiede un avvicinamento IN CORSO: senza "
+              "questa condizione una posa ferma sotto soglia (indice puntato, "
+              "medio ripiegato col pollice sopra) lo bloccherebbe per sempre."),
+        Param("pinch_freeze_max_time", "Durata max blocco (s)", "float", 0.2, 2.0, 0.05,
+              "Oltre questo tempo il cursore torna libero anche se le dita "
+              "restano vicine. Rete di sicurezza contro il cursore piantato."),
         Param("pinch_freeze_ratio", "Blocco cursore nel click", "float", 0.40, 1.60, 0.05,
               "Sotto questa distanza fra pollice e indice il cursore si blocca, "
               "cosi' il click cade dove stavi puntando invece che qualche pixel "
@@ -104,8 +112,12 @@ SECTIONS = [
     ("SCROLL E ZOOM", [
         Param("scroll_deadzone", "Zona morta scroll", "float", 0.002, 0.08, 0.002,
               "Quanto devi muovere la mano prima che parta lo scroll."),
-        Param("scroll_gain", "Intensita' scroll", "float", 1.0, 30.0, 0.5,
-              "Quanto scorre la pagina per un dato movimento."),
+        Param("scroll_gain", "Intensita' scroll", "float", 2.0, 80.0, 1.0,
+              "Scatti di rotellina per un'altezza intera di inquadratura. E' la "
+              "stessa unita' della rotellina fisica: 3 scatti = 3 scatti."),
+        Param("scroll_max_notches", "Scatti max per evento", "int", 1, 10, 1,
+              "Tetto di scatti emessi in una volta sola. Basso = scroll piu' "
+              "controllato, alto = piu' veloce ma piu' facile da sbandare."),
         Param("zoom_trigger_ratio", "Soglia zoom", "float", 0.05, 0.60, 0.01,
               "Variazione relativa della distanza fra le mani necessaria per uno "
               "scatto di zoom."),
@@ -113,6 +125,8 @@ SECTIONS = [
               "Tempo minimo fra due scatti di zoom."),
         Param("zoom_smooth_factor", "Smoothing zoom", "int", 1, 15, 1,
               "Su quanti fotogrammi viene mediata la distanza fra le mani."),
+        Param("zoom_notches", "Scatti per passo di zoom", "int", 1, 5, 1,
+              "Quanti scatti di ctrl+rotellina manda un singolo passo di zoom."),
         Param("slide_cooldown_time", "Pausa fra slide (s)", "float", 0.05, 2.0, 0.05,
               "Tempo minimo fra due pressioni delle frecce con la gesture slide."),
     ]),
@@ -131,6 +145,10 @@ SECTIONS = [
               "piu' di ritardo."),
         Param("idle_after_seconds", "Attesa prima del riposo (s)", "float", 0.2, 5.0, 0.1,
               "Dopo quanti secondi senza mani si entra in modalita' risparmio."),
+        Param("hand_lost_frames", "Buchi di rilevamento tollerati", "int", 0, 10, 1,
+              "Quanti fotogrammi senza mano si ignorano prima di considerarla "
+              "persa. A 0 ogni singolo buco del modello azzera lo stato e "
+              "spezza i trascinamenti."),
         Param("cursor_engage_frames", "Fotogrammi prima di agganciare", "int", 1, 8, 1,
               "Quanti fotogrammi consecutivi con la mano visibile servono prima "
               "che il cursore inizi a muoversi. Evita che una rilevazione "

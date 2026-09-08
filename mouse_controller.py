@@ -10,7 +10,13 @@ Punti chiave:
   usciva dalla funzione *prima* di `kf.correct()`, quindi il Kalman divergeva
   durante le pause e il cursore saltava appena si riprendeva a muovere;
 * su Windows il cursore si muove con `SetCursorPos` via ctypes, misurato circa
-  2.2x piu' veloce di `pyautogui.moveTo`, con fallback a pyautogui altrove.
+  2.2x piu' veloce di `pyautogui.moveTo`, con fallback a pyautogui altrove;
+* la rotellina NON passa da `pyautogui.scroll`. Su Windows quella funzione
+  inoltra il suo argomento tale e quale a `mouse_event(MOUSEEVENTF_WHEEL, ...,
+  dwData=n)`, ma li' l'unita' e' WHEEL_DELTA e **uno scatto vale 120**. Era il
+  motivo per cui lo zoom non faceva assolutamente nulla: `pyautogui.scroll(3)`
+  con ctrl premuto manda il 2.5% di uno scatto, e nessuna applicazione zooma
+  per cosi' poco. Qui si moltiplica per WHEEL_DELTA e si parla in scatti.
 """
 
 import math
@@ -26,16 +32,35 @@ pyautogui.FAILSAFE = False
 
 _IS_WINDOWS = platform.system() == "Windows"
 
+# Unita' della rotellina secondo l'API Win32: un click di rotellina = 120.
+WHEEL_DELTA = 120
+
 if _IS_WINDOWS:
     import ctypes
 
     _user32 = ctypes.windll.user32
+    _MOUSEEVENTF_WHEEL = 0x0800
+    # dwData deve poter essere negativo: senza argtypes espliciti ctypes lo
+    # tratterebbe come unsigned e uno scroll all'indietro diventerebbe un
+    # salto enorme in avanti.
+    _user32.mouse_event.argtypes = (ctypes.c_uint, ctypes.c_long, ctypes.c_long,
+                                    ctypes.c_int, ctypes.c_void_p)
+    _user32.mouse_event.restype = None
 
     def _set_cursor(x, y):
         _user32.SetCursorPos(int(x), int(y))
+
+    def _wheel(notches):
+        """Ruota la rotellina di `notches` scatti nella posizione corrente."""
+        _user32.mouse_event(_MOUSEEVENTF_WHEEL, 0, 0,
+                            int(notches) * WHEEL_DELTA, None)
 else:
     def _set_cursor(x, y):
         pyautogui.moveTo(int(x), int(y), _pause=False)
+
+    def _wheel(notches):
+        # Su X11 e macOS pyautogui parla gia' in scatti.
+        pyautogui.scroll(int(notches))
 
 
 class OneEuroFilter:
@@ -197,9 +222,10 @@ class MouseController:
             pyautogui.mouseUp()
             self.drag_active = False
 
-    def scroll(self, clicks):
-        if clicks:
-            pyautogui.scroll(int(clicks))
+    def scroll(self, notches):
+        """`notches` e' in scatti di rotellina, non in unita' grezze."""
+        if notches:
+            _wheel(notches)
 
     def perform_slide(self, direction):
         key = {"left": "left", "right": "right", "up": "up", "down": "down"}.get(direction)
@@ -244,9 +270,10 @@ class MouseController:
             return False, None
 
         direction = "in" if change > 0 else "out"
+        notches = max(1, int(getattr(cfg, "zoom_notches", 1)))
         pyautogui.keyDown("ctrl")
         try:
-            pyautogui.scroll(3 if change > 0 else -3)
+            _wheel(notches if change > 0 else -notches)
         finally:
             pyautogui.keyUp("ctrl")
 

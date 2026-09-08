@@ -40,6 +40,20 @@ from webcam_manager import WebcamManager
 
 WINDOW_NAME = "AirMouse"
 
+# `cv2.waitKey(1)` non costa 1 ms: su Windows entra nel ciclo di messaggi Win32
+# e si allinea alla risoluzione del timer di sistema, che di default e' 15.6 ms.
+# Misurato su questa macchina: imshow + waitKey(1) = 15.7 ms per fotogramma,
+# imshow + pollKey() = 0.37 ms. Il modello ne costa 14: la finestra di debug
+# costava piu' del riconoscimento, e quei 15 ms erano latenza pura sul cursore.
+_POLL_KEY = getattr(cv2, "pollKey", None)
+
+
+def _pump_window():
+    """Svuota la coda eventi della finestra e restituisce il tasto premuto."""
+    if _POLL_KEY is not None:
+        return _POLL_KEY() & 0xFF
+    return cv2.waitKey(1) & 0xFF
+
 
 class AirMouseApp:
     """Applicazione AirMouse."""
@@ -69,6 +83,7 @@ class AirMouseApp:
         self._last_results = None
         self._last_hands = {"Right": None, "Left": None}
         self._hand_streak = 0
+        self._missing_frames = 0
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -196,11 +211,19 @@ class AirMouseApp:
         other = hands.get("Left" if dominant_label == "Right" else "Right")
 
         if hand is None:
-            self._hand_streak = 0
-            for name, payload in self.gestures.hand_lost(now):
-                self._dispatch(name, payload)
-            self.mouse_controller.reset_cursor_filter()
+            # Il modello perde l'aggancio per un fotogramma isolato di
+            # continuo. Dichiarare subito la mano persa azzerava la macchina a
+            # stati, apriva 0.25 s di grazia e rilasciava un eventuale drag: il
+            # cursore singhiozzava e i trascinamenti si spezzavano a meta'.
+            # Qui un buco breve viene semplicemente ignorato.
+            self._missing_frames += 1
+            if self._missing_frames > config.hand_lost_frames:
+                self._hand_streak = 0
+                for name, payload in self.gestures.hand_lost(now):
+                    self._dispatch(name, payload)
+                self.mouse_controller.reset_cursor_filter()
         else:
+            self._missing_frames = 0
             self._hand_streak += 1
             nx, ny = hand.point(INDEX_TIP)
             # prepare() per primo: calcola i rapporti di pinch su QUESTO
@@ -332,7 +355,7 @@ class AirMouseApp:
         cv2.imshow(WINDOW_NAME, frame)
         self.window_open = True
 
-        key = cv2.waitKey(1) & 0xFF
+        key = _pump_window()
         if key == 27:  # ESC
             set_running(False)
             return False
@@ -356,8 +379,16 @@ class AirMouseApp:
         lines = [
             "%s  |  %.0f fps  |  %.1f ms modello" % (
                 g.status_text(), self.perf.fps, self.perf.inference_ms),
-            "pinch sx %.2f (soglia %.2f)" % (g.left_ratio, config.pinch_close_ratio),
-            "pinch dx %.2f (soglia %.2f)" % (g.right_ratio, config.right_pinch_close_ratio),
+            "pinch sx %.2f (soglia %.2f)%s" % (
+                g.left_ratio, config.pinch_close_ratio,
+                "" if g.left_pinch.armed else "  DISARMATO"),
+            "pinch dx %.2f (soglia %.2f)%s" % (
+                g.right_ratio, config.right_pinch_close_ratio,
+                "" if g.middle_pointing else "  medio chiuso"),
+            "indice %.2f  medio %.2f  (soglie %.2f / %.2f)" % (
+                g.index_extension, g.middle_extension,
+                config.index_control_ratio, config.middle_control_ratio),
+            "cursore: %s" % ("BLOCCATO" if g.frozen else "libero"),
             "velocita' %.0f px/s (max %.0f)" % (g.hand_speed, config.max_gesture_speed),
             "mani tracciate: %d%s" % (
                 self.hand_tracker.max_num_hands,
@@ -372,7 +403,7 @@ class AirMouseApp:
 
         pad = 8
         line_h = 18
-        w = min(330, frame.shape[1] - 20)
+        w = min(400, frame.shape[1] - 20)
         h = min(pad * 2 + line_h * len(lines), frame.shape[0] - 20)
 
         panel = frame[10:10 + h, 10:10 + w]
