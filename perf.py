@@ -21,7 +21,7 @@ L'ordine e' stato rifatto sulle misure, perche' quello precedente spendeva i
 primi due livelli su cose che non costano niente. Con `cv2.pollKey()` al posto
 di `cv2.waitKey(1)`, l'intero `_render` (imshow + overlay + tastiera) costa
 0.99 ms mediani contro i 15.7 ms di prima: chiudere la finestra di debug non e'
-piu' un risparmio. Il modello si': complessita' 1 contro 0 vale 2.6 ms
+piu' un risparmio. Il modello si': complessita' 1 contro 0 vale 2.3 ms
 misurati, cioe' l'unica leva vera. Quindi il modello viene prima della
 finestra, non dopo.
 
@@ -157,7 +157,7 @@ class PerformanceGovernor:
             cfg.draw_landmarks = False
             cfg.overlay_enabled = False
         if self.level >= 2:
-            # La leva vera: 2.6 ms misurati. Viene prima della finestra.
+            # La leva vera: 2.3 ms misurati. Viene prima della finestra.
             cfg.model_complexity = 0
             if hand_tracker is not None:
                 hand_tracker.reconfigure(model_complexity=0)

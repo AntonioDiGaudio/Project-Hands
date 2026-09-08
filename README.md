@@ -171,7 +171,7 @@ Misure prese su questa macchina (Windows 11, webcam 640x480):
 | Voce | Costo |
 |---|---|
 | Modello, nessuna mano inquadrata | 22-24 ms per fotogramma |
-| Modello, complessita' 0 vs 1 (webcam reale) | 14.9 ms contro 17.5 ms |
+| Modello, complessita' 0 vs 1 (webcam reale) | 14.4 ms contro 16.7 ms |
 | Backend webcam MSMF contro DSHOW | 30.2 fps contro 17.0 fps |
 | `cvtColor` con buffer riusato | 0.03 ms |
 | Overlay a pannello contro overlay a frame intero | 0.02 ms contro 0.34 ms |
@@ -195,9 +195,17 @@ costa 37.9 ms e 640x480 ne costa 35.1. Abbassare la risoluzione peggiorava
 quindi la precisione dei landmark senza far guadagnare nulla. Il default e'
 640x480.
 
-**Il default e' `model_complexity = 1`.** Costa 2.6 ms in piu' del modello
+> Le misure del modello vanno prese con una avvertenza: costruire piu' grafi
+> MediaPipe di fila nello stesso processo contamina i tempi, perche' i thread
+> pool dei grafi gia' chiusi non spariscono subito e le configurazioni misurate
+> per ultime pagano la contesa. Una passata sola su questo banco ha dato 35.4 ms
+> per "2 mani, complessita' 0" contro 14.3 ms in un processo pulito — piu' della
+> *stessa* configurazione a complessita' 1, il che rende l'errore evidente. Per
+> questo `benchmark.py` ripete la griglia tre volte e tiene il minimo.
+
+**Il default e' `model_complexity = 1`.** Costa 2.3 ms in piu' del modello
 lite, ma il tetto reale del loop e' la webcam, che consegna un fotogramma ogni
-33 ms: quei 2.6 ms non tolgono un solo fotogramma. In cambio i landmark del
+33 ms: quei 2.3 ms non tolgono un solo fotogramma. In cambio i landmark del
 pollice durante il pinch sono molto piu' stabili, ed e' il pollice a decidere
 se un click parte. Su una macchina che non regge, il governor scende da solo a
 0 — e' la prima cosa che toglie, perche' e' anche la piu' redditizia.
@@ -207,7 +215,7 @@ livello, disattivava `enable_zoom`: lo zoom spariva senza spiegazione, e siccome
 `max_num_hands` in `app` segue proprio `enable_zoom`, i due si rincorrevano
 ricostruendo il grafo MediaPipe. L'ordine dei livelli e' stato anche rifatto
 sulle misure: con `pollKey` la finestra di debug costa 1 ms e non e' piu' un
-risparmio, mentre il modello vale 2.6 ms, quindi il modello viene prima.
+risparmio, mentre il modello vale 2.3 ms, quindi il modello viene prima.
 
 **Il costo scala con le mani effettivamente rilevate, non con il tetto
 impostato.** Con nessuna mano inquadrata, `max_num_hands` a 1 o a 2 costa
