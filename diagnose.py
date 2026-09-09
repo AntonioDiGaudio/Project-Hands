@@ -74,6 +74,7 @@ class Recording:
         self.middle_ext = []
         self.thumb_index = []
         self.thumb_middle = []
+        self.index_middle = []
         self.fingers = []
         self.scale = []
 
@@ -82,6 +83,13 @@ class Recording:
         self.middle_ext.append(hand.middle_extension)
         self.thumb_index.append(hand.ratio(THUMB_TIP, INDEX_TIP))
         self.thumb_middle.append(hand.ratio(THUMB_TIP, MIDDLE_TIP))
+        # Le due punte fra loro. In un pinch a tre dita convergono entrambe sul
+        # pollice, quindi si avvicinano fra loro: e' una misura del gesto che
+        # non dipende da DOVE esattamente il medio va a finire — sulla polpa
+        # del pollice, di lato all'indice, sotto. La distanza punta-pollice
+        # invece dipende, ed e' probabilmente il motivo per cui il click destro
+        # non scatta.
+        self.index_middle.append(hand.ratio(INDEX_TIP, MIDDLE_TIP))
         self.fingers.append(hand.fingers)
         self.scale.append(hand.scale)
 
@@ -98,6 +106,8 @@ class Recording:
                                pct(self.thumb_index, 0.95)),
             "pollice-medio": (pct(self.thumb_middle, 0.05), pct(self.thumb_middle, 0.50),
                               pct(self.thumb_middle, 0.95)),
+            "indice-medio": (pct(self.index_middle, 0.05), pct(self.index_middle, 0.50),
+                             pct(self.index_middle, 0.95)),
         }
 
     def fingers_typical(self):
@@ -148,6 +158,9 @@ class Free:
         self.frames = 0
         self.gated = {}
         self.frozen = 0
+        self.holds = []          # durata di ogni contatto pollice-indice
+        self.first_time = None
+        self.last_time = None
         self.left_armed = 0
         self.left_closed = 0
         self.right_armed = 0
@@ -159,6 +172,13 @@ class Free:
 
     def add(self, g, hand, frozen, events, now):
         self.frames += 1
+        if self.first_time is None:
+            self.first_time = now
+        self.last_time = now
+        # Quanto e' durato ogni contatto vero. E' la grandezza che decide fra
+        # click e drag, e va confrontata con `drag_hold_time`.
+        if g.left_pinch.just_opened:
+            self.holds.append(g.left_pinch.contact_end - g.left_pinch.close_time)
         self.rec.add(hand)
         key = g.gated_reason or "(nessuno)"
         self.gated[key] = self.gated.get(key, 0) + 1
@@ -227,6 +247,8 @@ def live_lines(hand, g):
         % (hand.ratio(THUMB_TIP, INDEX_TIP), config.pinch_close_ratio),
         "pollice-medio  %.2f   chiude sotto %.2f"
         % (hand.ratio(THUMB_TIP, MIDDLE_TIP), config.right_pinch_close_ratio),
+        "indice-medio   %.2f   (le due punte fra loro)"
+        % hand.ratio(INDEX_TIP, MIDDLE_TIP),
     ]
 
 
@@ -342,7 +364,8 @@ def main():
                 a, b = hands.get("Right"), hands.get("Left")
                 pose_ok = (a is not None and b is not None
                            and a.fingers[0] and b.fingers[0]
-                           and not a.fingers[1] and not b.fingers[1])
+                           and a.ratio(THUMB_TIP, INDEX_TIP) > config.pinch_open_ratio
+                           and b.ratio(THUMB_TIP, INDEX_TIP) > config.pinch_open_ratio)
                 ratio = None
                 fired = False
                 if pose_ok:
@@ -450,6 +473,18 @@ def write_report(recordings, free, zoom=None):
         w("\n  eventi emessi: %d\n" % len(free.events))
         for t, name, payload in free.events:
             w("    %8.2f  %-12s %s\n" % (t, name, payload if payload is not None else ""))
+        span = (free.last_time or 0.0) - (free.first_time or 0.0)
+        if span > 0.5:
+            w("\n  ritmo reale              : %.1f fotogrammi al secondo\n"
+              % (free.frames / span))
+        w("\n  durata dei pinch fatti (contatto pollice-indice), "
+          "soglia click/drag %.2f s:\n" % config.drag_hold_time)
+        if not free.holds:
+            w("    nessun pinch completato\n")
+        else:
+            w("    %s\n" % "  ".join("%.2f" % h for h in free.holds[-24:]))
+            w("    mediana %.2f s, piu' lungo %.2f s\n"
+              % (pct(free.holds, 0.50), max(free.holds)))
         w("\n  misure durante la fase libera:\n")
         for name, (lo, mid, hi) in free.rec.summary().items():
             w("    %-16s %5.2f  %5.2f  %5.2f\n" % (name, lo, mid, hi))
@@ -548,6 +583,34 @@ def verdict(recordings, free, zoom=None):
                 "lontana resta a %.2f contro una chiusura di %.2f. Avvicina "
                 "indice e medio al pollice insieme."
                 % (closed, config.right_pinch_close_ratio))
+            # Se il medio non arriva sul POLLICE ma arriva sull'INDICE, la
+            # gesture e' fatta bene ed e' la misura a essere sbagliata.
+            if ok(pinch):
+                im_three = pct(mpinch.index_middle, 0.95)
+                im_left = pct(pinch.index_middle, 0.05)
+                lines.append(
+                    "  Ma indice e medio SI avvicinano fra loro: %.2f nel pinch a "
+                    "tre dita contro %.2f nel pinch semplice."
+                    % (im_three, im_left))
+                if im_three < im_left:
+                    lines.append(
+                        "  Le due pose sono separabili guardando indice-medio "
+                        "invece di pollice-medio (margine %.2f)."
+                        % (im_left - im_three))
+                else:
+                    lines.append(
+                        "  Nemmeno indice-medio le separa: la posa a tre dita "
+                        "va rifatta portando le due punte a contatto.")
+    if ok(mpinch) and ok(pinch) and ok(point):
+        lines.append("Distanze utili al click destro (5o/50o/95o percentile):")
+        for label, rec in (("pinch a tre dita", mpinch), ("pinch semplice", pinch),
+                           ("puntamento", point)):
+            lines.append("  %-18s pollice-medio %.2f/%.2f/%.2f   indice-medio %.2f/%.2f/%.2f"
+                         % (label,
+                            pct(rec.thumb_middle, 0.05), pct(rec.thumb_middle, 0.50),
+                            pct(rec.thumb_middle, 0.95),
+                            pct(rec.index_middle, 0.05), pct(rec.index_middle, 0.50),
+                            pct(rec.index_middle, 0.95)))
 
     # 4. Cosa e' successo davvero provando.
     if free.frames:
@@ -579,8 +642,8 @@ def verdict(recordings, free, zoom=None):
         elif zoom.pose_ok / n < 0.3:
             lines.append(
                 "ZOOM: le due mani si vedono (%.0f%%) ma la posa vale solo nel "
-                "%.0f%% dei fotogrammi. Serve SOLO l'indice esteso su entrambe: "
-                "il medio deve restare chiuso."
+                "%.0f%% dei fotogrammi. Servono gli indici estesi su entrambe, e "
+                "nessuna delle due mani deve stare pinzando."
                 % (100 * zoom.two_hands / n, 100 * zoom.pose_ok / n))
         elif zoom.events == 0:
             lines.append(

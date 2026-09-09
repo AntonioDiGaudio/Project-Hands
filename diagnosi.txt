@@ -3,11 +3,10 @@ DIAGNOSI AIRMOUSE
 
 Soglie attive (da Profiles/settings.txt)
 ----------------------------------------------------------------------
-  index_control_ratio        0.75
-  middle_control_ratio       0.75
-  pinch_close_ratio          0.45
-  pinch_open_ratio           0.7
-  pinch_freeze_ratio         0.95
+  index_control_ratio        0.38
+  pinch_close_ratio          0.41
+  pinch_open_ratio           0.77
+  pinch_freeze_ratio         0.97
   right_pinch_close_ratio    0.45
   right_pinch_open_ratio     0.7
   pinch_approach_drop        0.2
@@ -21,69 +20,99 @@ Soglie attive (da Profiles/settings.txt)
 Misure per posa   (5o percentile / mediana / 95o percentile)
 ======================================================================
 
-INDICE PUNTATO   (67 campioni, dita ^___)
-    indice teso       0.92   0.93   0.95
-    medio teso        0.45   0.46   0.47
-    pollice-indice    1.18   1.19   1.22
-    pollice-medio     0.21   0.22   0.22
+INDICE PUNTATO   (67 campioni, dita ^^^^)
+    indice teso       0.88   0.89   0.90
+    medio teso        1.05   1.06   1.07
+    pollice-indice    1.04   1.05   1.07
+    pollice-medio     1.43   1.44   1.46
+    indice-medio      0.46   0.46   0.48
 
-POLLICE + INDICE UNITI   (67 campioni, dita _^^^)
-    indice teso       0.45   0.46   0.47
-    medio teso        0.83   0.84   0.86
-    pollice-indice    0.13   0.14   0.15
-    pollice-medio     0.96   0.98   1.00
+POLLICE + INDICE UNITI   (68 campioni, dita _^^^)
+    indice teso       0.37   0.38   0.38
+    medio teso        0.79   0.80   0.83
+    pollice-indice    0.06   0.07   0.08
+    pollice-medio     0.85   0.87   0.91
+    indice-medio      0.81   0.83   0.86
 
-POLLICE + MEDIO UNITI   (67 campioni, dita ^_^^)
-    indice teso       0.67   0.73   0.79
-    medio teso        0.45   0.47   0.47
-    pollice-indice    0.65   0.74   0.82
-    pollice-medio     0.09   0.12   0.15
+POLLICE + INDICE + MEDIO   (66 campioni, dita ^_^^)
+    indice teso       0.46   0.47   0.48
+    medio teso        0.42   0.44   0.46
+    pollice-indice    0.15   0.16   0.17
+    pollice-medio     0.08   0.10   0.12
+    indice-medio      0.16   0.19   0.21
 
-PUGNO CHIUSO   (67 campioni, dita ____)
-    indice teso       0.23   0.27   0.30
-    medio teso        0.28   0.32   0.35
-    pollice-indice    0.15   0.20   0.25
-    pollice-medio     0.26   0.28   0.32
+PUGNO CHIUSO   (66 campioni, dita ____)
+    indice teso       0.19   0.21   0.22
+    medio teso        0.21   0.24   0.26
+    pollice-indice    0.23   0.24   0.25
+    pollice-medio     0.20   0.22   0.24
+    indice-medio      0.14   0.15   0.16
 
-MANO BEN APERTA   (65 campioni, dita ^^^^)
-    indice teso       0.78   0.79   0.80
-    medio teso        0.92   0.94   0.95
-    pollice-indice    0.94   0.96   0.98
-    pollice-medio     1.27   1.29   1.31
+MANO BEN APERTA   (67 campioni, dita ^^^^)
+    indice teso       0.82   0.83   0.86
+    medio teso        0.98   0.99   1.04
+    pollice-indice    0.97   0.98   1.08
+    pollice-medio     1.34   1.35   1.47
+    indice-medio      0.41   0.42   0.44
 
 
 Fase libera
 ======================================================================
-  fotogrammi con mano      : 446
-  posa di controllo ok     : 196  (44%)
-  medio disteso ok         : 330  (74%)
-  pinch sx armato          : 157  (35%)
-  pinch sx chiuso          : 0  (0%)
-  pinch dx armato          : 136  (30%)
-  pinch dx chiuso          : 0  (0%)
-  cursore congelato        : 15  (3%)
+  fotogrammi con mano      : 554
+  posa di controllo ok     : 525  (95%)
+  pinch a tre dita armato  : 511  (92%)
+  pinch sx armato          : 511  (92%)
+  pinch sx chiuso          : 203  (37%)
+  pinch dx armato          : 511  (92%)
+  pinch dx chiuso          : 99  (18%)
+  cursore congelato        : 309  (56%)
 
   motivo del blocco, per fotogramma:
-    mano chiusa              226  (51%)
-    (nessuno)                187  (42%)
-    riaggancio                33  (7%)
+    (nessuno)                491  (89%)
+    riaggancio                37  (7%)
+    mano chiusa               26  (5%)
 
-  eventi emessi: 0
+  eventi emessi: 8
+    1788962099.98  drag_start   
+    1788962100.89  drag_end     
+    1788962101.47  drag_start   
+    1788962101.82  drag_end     
+    1788962104.75  right_click  
+    1788962107.13  right_click  
+    1788962109.39  left_click   
+    1788962110.69  left_click   
+
+  ritmo reale              : 27.7 fotogrammi al secondo
+
+  durata dei pinch fatti (contatto pollice-indice), soglia click/drag 0.35 s:
+    1.47  0.59  1.90  1.66  0.17  0.11
+    mediana 1.47 s, piu' lungo 1.90 s
 
   misure durante la fase libera:
-    indice teso       0.27   0.70   0.94
-    medio teso        0.45   0.87   1.08
-    pollice-indice    0.09   0.67   1.30
-    pollice-medio     0.34   0.97   1.66
+    indice teso       0.37   0.72   0.89
+    medio teso        0.46   0.89   1.04
+    pollice-indice    0.09   0.79   1.05
+    pollice-medio     0.11   1.14   1.43
+    indice-medio      0.07   0.41   0.86
+
+
+Fase zoom (due mani)
+======================================================================
+  fotogrammi               : 350
+  due mani rilevate        : 229  (65%)
+  posa di zoom valida      : 0  (0%)
+  zoom che sarebbero partiti: 0
 
 
 Lettura automatica
 ======================================================================
-  BLOCCANTE: pinzando, l'indice misura 0.45 (5o pct) contro una soglia index_control_ratio di 0.75.
+  BLOCCANTE: pinzando, l'indice misura 0.37 (5o pct) contro una soglia index_control_ratio di 0.38.
     Il gate 'mano chiusa' scatta proprio mentre clicchi, quindi click, drag e click destro non partono MAI. Il cursore invece continua a muoversi, perche' non passa da questo gate.
-    Valore giusto per la tua mano: circa 0.38 (fra pugno 0.30 e pinch 0.45).
-    Soglie sensate per la tua mano: chiusura 0.41, apertura 0.77.
-  BLOCCANTE per il click destro: nel pinch pollice+medio il medio misura 0.45 contro middle_control_ratio 0.75, quindi la gesture viene ignorata.
-  Nella prova, la posa di controllo era valida solo nel 44% dei fotogrammi: e' il gate che ti blocca.
-  Nella prova, il pinch sinistro e' rimasto disarmato nel 65% dei fotogrammi: la mano non viene mai vista abbastanza aperta, quindi il click non si arma.
-  Nella prova non e' stato emesso NESSUN evento.
+    Valore giusto per la tua mano: circa 0.29 (fra pugno 0.22 e pinch 0.37).
+    Soglie sensate per la tua mano: chiusura 0.32, apertura 0.65.
+  Distanze utili al click destro (5o/50o/95o percentile):
+    pinch a tre dita   pollice-medio 0.08/0.10/0.12   indice-medio 0.16/0.19/0.21
+    pinch semplice     pollice-medio 0.85/0.87/0.91   indice-medio 0.81/0.83/0.86
+    puntamento         pollice-medio 1.43/1.44/1.46   indice-medio 0.46/0.46/0.48
+  Nella prova, il cursore e' rimasto bloccato nel 56% dei fotogrammi.
+  ZOOM: le due mani si vedono (65%) ma la posa vale solo nel 0% dei fotogrammi. Serve SOLO l'indice esteso su entrambe: il medio deve restare chiuso.

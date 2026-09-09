@@ -46,11 +46,15 @@ def refresh_pose_constants():
     EXT_PINCHING = ctrl + 0.25    # indice piegato in punta per pinzare
     EXT_FIST = max(0.05, ctrl - 0.25)   # indice ripiegato sul palmo
 
-    # Il medio non ha piu' una soglia sua: il click destro e' un pinch a tre
-    # dita, che si misura sulle distanze e non sull'estensione. Questi due
-    # restano solo per costruire pose sintetiche coerenti.
-    MID_PINCHING = ctrl + 0.25
-    MID_FIST = max(0.05, ctrl - 0.25)
+    # Il medio ha di nuovo una soglia sua, ma con un ruolo diverso: non e' una
+    # condizione da soddisfare insieme all'indice, e' un'ALTERNATIVA. Basta uno
+    # dei due diti disteso perche' la mano conti come aperta. Questi valori
+    # stanno quindi rispetto a `middle_control_ratio`, e riproducono le
+    # distanze misurate: pinzando l'indice il medio resta disteso (0.80-0.84),
+    # nel pugno no (0.24-0.32).
+    mid = config.middle_control_ratio
+    MID_PINCHING = mid + 0.40
+    MID_FIST = max(0.05, mid - 0.12)
 
 
 refresh_pose_constants()
@@ -182,16 +186,28 @@ def test_right_click_fires_once_per_gesture():
     Prima era il solo pollice+medio, e su una mano vera non si separa dalla
     posa di puntamento: li' il pollice sta gia' appoggiato sul medio ripiegato
     a 0.22 contro lo 0.12 del pinch voluto, margine dentro il rumore.
+
+    Esce alla CHIUSURA e non alla riapertura: aspettare il fronte di apertura
+    voleva dire chiedere che entrambe le punte tornassero sopra la soglia con
+    la macchina a stati ancora intatta, e qualunque azzeramento nel frattempo
+    faceva sparire il click destro invece di ritardarlo.
     """
     r = GestureRecognizer(config)
     clock = Clock()
     settle(r, clock)
-    run(r, clock, make_hand(0.2, 0.2), frames=40)   # tre dita, tenuto a lungo
-    events = run(r, clock, make_hand(1.0, 1.0), frames=6)
+    chiusura = run(r, clock, make_hand(0.2, 0.2), frames=40)  # tre dita, tenuto
+    apertura = run(r, clock, make_hand(1.0, 1.0), frames=6)
+    events = chiusura + apertura
     check("il pinch a tre dita produce esattamente un click destro",
           events.count(RIGHT_CLICK) == 1, "eventi: %r" % events)
+    check("il click destro esce subito, senza aspettare la riapertura",
+          RIGHT_CLICK in chiusura, "chiusura: %r" % chiusura)
+    check("tenerlo chiuso non ne produce altri",
+          chiusura.count(RIGHT_CLICK) == 1, "chiusura: %r" % chiusura)
     check("e non produce anche un click sinistro",
           LEFT_CLICK not in events, "eventi: %r" % events)
+    check("ne' un drag, che e' lo stesso pinch tenuto",
+          DRAG_START not in events, "eventi: %r" % events)
 
 
 def test_thumb_middle_alone_does_nothing():
@@ -256,7 +272,8 @@ def test_closed_hand_is_inert():
     clock = Clock()
     settle(r, clock)
     # Pugno vero: pollice e indice vicini MA indice ripiegato sul palmo.
-    hand = make_hand(0.2, 0.2, fingers=(0, 0, 0, 0), index_extension=EXT_FIST)
+    hand = make_hand(0.2, 0.2, fingers=(0, 0, 0, 0), index_extension=EXT_FIST,
+                     middle_extension=MID_FIST)
     events = run(r, clock, hand, frames=120)
     check("pugno chiuso non produce nessun evento",
           events == [], "eventi: %r" % events)
@@ -309,7 +326,8 @@ def test_pinch_and_fist_are_distinguished():
     r2 = GestureRecognizer(config)
     clock2 = Clock()
     settle(r2, clock2)
-    run(r2, clock2, make_hand(0.2, 1.0, index_extension=EXT_FIST), frames=4)
+    run(r2, clock2, make_hand(0.2, 1.0, index_extension=EXT_FIST,
+                              middle_extension=MID_FIST), frames=4)
     fist_events = run(r2, clock2, make_hand(1.0, 1.0), frames=6)
 
     check("il pinch clicca", pinch_events.count(LEFT_CLICK) == 1,

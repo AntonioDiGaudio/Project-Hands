@@ -11,6 +11,12 @@ Punti chiave:
   durante le pause e il cursore saltava appena si riprendeva a muovere;
 * su Windows il cursore si muove con `SetCursorPos` via ctypes, misurato circa
   2.2x piu' veloce di `pyautogui.moveTo`, con fallback a pyautogui altrove;
+* i tasti si premono con `mouse_event` diretto e non con `pyautogui.click()`.
+  Quella funzione, prima di premere, chiama `moveTo` sulla posizione corrente:
+  un `SetCursorPos` in piu' fra la mira e la pressione, cioe' l'unico punto in
+  cui il cursore poteva ancora spostarsi. Qui down e up partono senza niente in
+  mezzo, e il secondo click di un doppio puo' essere inchiodato sul pixel
+  esatto del primo;
 * la rotellina NON passa da `pyautogui.scroll`. Su Windows quella funzione
   inoltra il suo argomento tale e quale a `mouse_event(MOUSEEVENTF_WHEEL, ...,
   dwData=n)`, ma li' l'unita' e' WHEEL_DELTA e **uno scatto vale 120**. Era il
@@ -37,9 +43,14 @@ WHEEL_DELTA = 120
 
 if _IS_WINDOWS:
     import ctypes
+    import ctypes.wintypes
 
     _user32 = ctypes.windll.user32
     _MOUSEEVENTF_WHEEL = 0x0800
+    _MOUSEEVENTF_LEFTDOWN = 0x0002
+    _MOUSEEVENTF_LEFTUP = 0x0004
+    _MOUSEEVENTF_RIGHTDOWN = 0x0008
+    _MOUSEEVENTF_RIGHTUP = 0x0010
     # dwData deve poter essere negativo: senza argtypes espliciti ctypes lo
     # tratterebbe come unsigned e uno scroll all'indietro diventerebbe un
     # salto enorme in avanti.
@@ -54,6 +65,31 @@ if _IS_WINDOWS:
         """Ruota la rotellina di `notches` scatti nella posizione corrente."""
         _user32.mouse_event(_MOUSEEVENTF_WHEEL, 0, 0,
                             int(notches) * WHEEL_DELTA, None)
+
+    def _button(flags):
+        _user32.mouse_event(flags, 0, 0, 0, None)
+
+    def _left_down():
+        _button(_MOUSEEVENTF_LEFTDOWN)
+
+    def _left_up():
+        _button(_MOUSEEVENTF_LEFTUP)
+
+    def _right_click():
+        _button(_MOUSEEVENTF_RIGHTDOWN)
+        _button(_MOUSEEVENTF_RIGHTUP)
+
+    def _cursor_pixel():
+        point = ctypes.wintypes.POINT()
+        _user32.GetCursorPos(ctypes.byref(point))
+        return (point.x, point.y)
+
+    def system_double_click_time():
+        """Intervallo massimo fra due click perche' Windows li accoppi."""
+        try:
+            return max(0.05, _user32.GetDoubleClickTime() / 1000.0)
+        except Exception:
+            return 0.5
 else:
     def _set_cursor(x, y):
         pyautogui.moveTo(int(x), int(y), _pause=False)
@@ -61,6 +97,24 @@ else:
     def _wheel(notches):
         # Su X11 e macOS pyautogui parla gia' in scatti.
         pyautogui.scroll(int(notches))
+
+    def _left_down():
+        pyautogui.mouseDown()
+
+    def _left_up():
+        pyautogui.mouseUp()
+
+    def _right_click():
+        pyautogui.click(button="right")
+
+    def _cursor_pixel():
+        pos = pyautogui.position()
+        return (int(pos[0]), int(pos[1]))
+
+    def system_double_click_time():
+        # macOS e le varie X11 hanno ognuno la propria impostazione e nessuna
+        # API portabile: 0.5 s e' il valore di fabbrica ovunque.
+        return 0.5
 
 
 class OneEuroFilter:
@@ -133,13 +187,17 @@ class MouseController:
             cfg.one_euro_min_cutoff, cfg.one_euro_beta, cfg.one_euro_d_cutoff)
 
         self.last_pos = None          # ultima posizione effettivamente applicata
+        self.last_pixel = None        # stessa cosa, in pixel interi gia' limitati
+        self.last_click_pixel = None  # dove e' caduto l'ultimo click
         self.target_pos = None        # ultima posizione filtrata (anche se congelata)
         self._was_frozen = False
-        self._settle = None           # (dx, dy, istante di fine) dopo un blocco
+        self._offset = (0.0, 0.0)     # scarto lasciato da un congelamento
+        self._last_update = None
         self.drag_active = False
         self.last_zoom_ratio = None
         self.zoom_cooldown = 0.0
         self._zoom_window = []
+        self._zoom_seen = 0.0
         self.last_slide_time = 0.0
 
     # -- cursore -----------------------------------------------------------
@@ -185,36 +243,44 @@ class MouseController:
         fy = self.filter_y(sy, now)
         self.target_pos = (fx, fy)
 
+        dt = 0.0 if self._last_update is None else max(0.0, now - self._last_update)
+        self._last_update = now
+
         if frozen:
             # Il filtro continua ad aggiornarsi (cosi' non c'e' uno scatto alla
             # ripresa) ma il cursore resta dove sta.
             self._was_frozen = True
-            return self.last_pos if self.last_pos else (fx, fy)
+            return self.last_pos if self.last_pos is not None else (fx, fy)
 
         # Fine del congelamento. Il cursore era fermo, la mano no: la posizione
         # vera adesso e' altrove, e applicarla di colpo fa SALTARE il cursore.
         #
-        # Il caso che si vede e' l'inizio di un drag: li' il congelamento
-        # finisce a tasto gia' premuto, quindi il salto trascina davvero quello
-        # che stai afferrando. Invece di saltare si riassorbe lo scarto in
-        # `cursor_settle_time`, che a schermo si legge come un piccolo
-        # scivolamento invece che come uno scatto.
+        # Lo scarto diventa un OFFSET della mappatura, che si riassorbe da solo
+        # col tempo ma NON mentre un tasto e' premuto. Prima era
+        # un'animazione a tempo fisso, e all'inizio di un drag faceva scivolare
+        # il cursore di un centinaio di pixel a tasto gia' premuto, portandosi
+        # dietro quello che avevi appena afferrato. Congelando l'offset durante
+        # il trascinamento, la presa resta dove l'hai fatta e la mano continua a
+        # comandare uno a uno.
         if self._was_frozen:
             self._was_frozen = False
             if self.last_pos is not None:
-                span = max(1e-3, float(getattr(cfg, "cursor_settle_time", 0.35)))
-                self._settle = (self.last_pos[0] - fx, self.last_pos[1] - fy,
-                                now + span, span)
+                self._offset = self._clamp_offset(self.last_pos[0] - fx,
+                                                  self.last_pos[1] - fy)
 
-        if self._settle is not None:
-            dx, dy, until, span = self._settle
-            left = until - now
-            if left <= 0.0:
-                self._settle = None
+        ox, oy = self._offset
+        if (ox or oy) and not self.drag_active and dt > 0.0:
+            if abs(ox) < 0.5 and abs(oy) < 0.5:
+                ox = oy = 0.0
             else:
-                k = left / span      # 1 -> 0
-                fx += dx * k
-                fy += dy * k
+                # Decadimento esponenziale: indipendente dal frame rate, e non
+                # ha un istante di fine da mancare se il ciclo salta un colpo.
+                k = math.exp(-dt / max(1e-3, float(cfg.cursor_settle_time)))
+                ox *= k
+                oy *= k
+            self._offset = (ox, oy)
+        fx += ox
+        fy += oy
 
         if self.last_pos is not None:
             if (abs(fx - self.last_pos[0]) < cfg.deadzone_threshold
@@ -227,29 +293,57 @@ class MouseController:
         iy = 0 if iy < 0 else (self.screen_h - 1 if iy >= self.screen_h else iy)
         _set_cursor(ix, iy)
         self.last_pos = (fx, fy)
+        self.last_pixel = (ix, iy)
         return self.last_pos
+
+    def _clamp_offset(self, dx, dy):
+        """Tiene l'offset entro un quarto di schermo: oltre non e' piu' un rientro."""
+        limit = 0.25 * (self.screen_w * self.screen_w
+                        + self.screen_h * self.screen_h) ** 0.5
+        span = (dx * dx + dy * dy) ** 0.5
+        if span > limit:
+            k = limit / span
+            dx *= k
+            dy *= k
+        return (dx, dy)
 
     def reset_cursor_filter(self):
         self.filter_x.reset()
         self.filter_y.reset()
         self._was_frozen = False
-        self._settle = None
+        self._offset = (0.0, 0.0)
+        self._last_update = None
 
     # -- eventi ------------------------------------------------------------
-    def left_click(self):
-        pyautogui.click()
+    def left_click(self, same_spot=False):
+        """
+        Click sinistro.
+
+        `same_spot` rimette il cursore ESATTAMENTE dove e' caduto il click
+        precedente prima di premere, ed e' quello che rende possibile il doppio
+        click: Windows accoppia due click solo se cadono a pochi pixel l'uno
+        dall'altro (SM_CXDOUBLECLK, di fabbrica 4). Un cursore guidato dalla
+        mano non ci arriva per caso — nemmeno con il congelamento, che lavora
+        sulla posizione filtrata e non sul pixel finale.
+        """
+        if same_spot and self.last_click_pixel is not None:
+            _set_cursor(*self.last_click_pixel)
+        else:
+            self.last_click_pixel = self.last_pixel or _cursor_pixel()
+        _left_down()
+        _left_up()
 
     def right_click(self):
-        pyautogui.click(button="right")
+        _right_click()
 
     def drag_start(self):
         if not self.drag_active:
-            pyautogui.mouseDown()
+            _left_down()
             self.drag_active = True
 
     def drag_end(self):
         if self.drag_active:
-            pyautogui.mouseUp()
+            _left_up()
             self.drag_active = False
 
     def scroll(self, notches):
@@ -275,10 +369,18 @@ class MouseController:
         cfg = self.config
 
         if not active:
-            self.last_zoom_ratio = None
-            self._zoom_window.clear()
+            # Il riferimento non si butta al primo fotogramma senza posa.
+            # Con due mani in campo il modello ne perde una di continuo
+            # (misurato: due mani viste nel 65% dei fotogrammi), e ripartire da
+            # capo a ogni buco significa non raggiungere mai la variazione
+            # richiesta: lo zoom non parte e niente dice perche'.
+            if (self.last_zoom_ratio is not None
+                    and now - self._zoom_seen > cfg.zoom_lost_grace):
+                self.last_zoom_ratio = None
+                self._zoom_window.clear()
             return False, None
 
+        self._zoom_seen = now
         self._zoom_window.append(ratio)
         if len(self._zoom_window) > max(1, int(cfg.zoom_smooth_factor)):
             self._zoom_window.pop(0)
@@ -321,4 +423,5 @@ class MouseController:
             pass
         self.last_zoom_ratio = None
         self._zoom_window.clear()
+        self._zoom_seen = 0.0
         self.reset_cursor_filter()

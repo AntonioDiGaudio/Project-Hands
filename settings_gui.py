@@ -144,6 +144,7 @@ _LIMITS = {
     "right_pinch_open_ratio": (0.20, 1.20),
     "pinch_freeze_ratio": (0.25, 1.80),
     "index_control_ratio": (0.08, 1.60),
+    "middle_control_ratio": (0.08, 1.60),
 }
 
 

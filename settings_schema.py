@@ -45,7 +45,10 @@ SECTIONS = [
               "piu' alto della chiusura: la distanza fra i due valori e' quello "
               "che impedisce lo sfarfallio."),
         Param("right_pinch_close_ratio", "Chiusura pinch a tre dita", "float", 0.20, 0.80, 0.01,
-              "Come sopra ma per pollice+medio, che fa il click destro."),
+              "Come sopra ma per il click destro, che e' pollice + indice + "
+              "medio tutti insieme. La grandezza misurata e' la piu' lontana "
+              "delle due punte dal pollice, quindi scende sotto soglia solo "
+              "quando toccano entrambe."),
         Param("right_pinch_open_ratio", "Apertura pinch a tre dita", "float", 0.30, 1.20, 0.01,
               "Apertura del pinch del click destro."),
         Param("pinch_approach_drop", "Sensibilita' blocco cursore", "float", 0.05, 0.60, 0.01,
@@ -56,6 +59,13 @@ SECTIONS = [
         Param("pinch_freeze_max_time", "Durata max blocco (s)", "float", 0.2, 2.0, 0.05,
               "Oltre questo tempo il cursore torna libero anche se le dita "
               "restano vicine. Rete di sicurezza contro il cursore piantato."),
+        Param("index_curl_drop", "Anticipo blocco cursore", "float", 0.02, 0.40, 0.01,
+              "Di quanto deve piegarsi l'indice perche' il cursore si blocchi. "
+              "E' la misura piu' diretta del problema: il cursore sta sulla "
+              "PUNTA dell'indice, e pinzare piega l'indice, quindi la punta "
+              "scende. Piu' BASSO = il blocco arriva prima, cioe' il click "
+              "cade piu' vicino a dove puntavi; troppo basso e il cursore si "
+              "impunta mentre muovi la mano."),
         Param("pinch_freeze_ratio", "Blocco cursore nel click", "float", 0.40, 1.60, 0.05,
               "Sotto questa distanza fra pollice e indice il cursore si blocca, "
               "cosi' il click cade dove stavi puntando invece che qualche pixel "
@@ -69,6 +79,14 @@ SECTIONS = [
               "piega l'indice, quindi una soglia troppo alta annulla i click "
               "mentre li fai. Usa `python calibrate.py` per misurarla sulla tua "
               "mano invece di indovinarla."),
+        Param("middle_control_ratio", "Soglia mano aperta (medio)", "float",
+              0.10, 1.60, 0.01,
+              "Come sopra ma sul medio, e basta che passi UNA delle due. Il "
+              "solo indice non basta a separare il pugno dal pinch: fra le due "
+              "pose restano pochi centesimi, meno del rumore del modello. Il "
+              "medio invece resta disteso quando pinzi l'indice e si chiude nel "
+              "pugno, quindi separa molto meglio. Alzala se un pugno ti fa "
+              "partire delle gesture."),
         Param("pinch_confirm_frames", "Frame di conferma", "int", 1, 6, 1,
               "Quanti fotogrammi consecutivi deve durare un pinch prima di "
               "contare. Alzalo se ti partono click fantasma, abbassalo se i "
@@ -112,6 +130,13 @@ SECTIONS = [
     ("SCROLL E ZOOM", [
         Param("scroll_deadzone", "Zona morta scroll", "float", 0.002, 0.08, 0.002,
               "Quanto devi muovere la mano prima che parta lo scroll."),
+        Param("scroll_extension_ratio", "Dita tese per lo scroll", "float", 0.30, 1.20, 0.01,
+              "Quanto devono essere distesi indice e medio perche' la posa "
+              "conti come scroll. Non e' un dettaglio: riconoscere lo scroll "
+              "mette in pausa i pinch, quindi una soglia troppo bassa fa "
+              "sparire click e click destro ogni volta che il conteggio delle "
+              "dita sbanda. Se lo scroll non parte, abbassa; se ti mangia i "
+              "click, alza."),
         Param("scroll_gain", "Intensita' scroll", "float", 2.0, 80.0, 1.0,
               "Scatti di rotellina per un'altezza intera di inquadratura. E' la "
               "stessa unita' della rotellina fisica: 3 scatti = 3 scatti."),
@@ -158,7 +183,7 @@ SECTIONS = [
 
 TOGGLES = [
     ("drag_mode_enabled", "Abilita drag (pinch tenuto)"),
-    ("enable_right_click", "Abilita click destro (pollice+medio)"),
+    ("enable_right_click", "Abilita click destro (pinch a tre dita)"),
     ("enable_scroll", "Abilita scroll a due dita"),
     ("enable_zoom", "Abilita zoom a due mani"),
     ("enable_slide", "Abilita slide con pugno (frecce)"),

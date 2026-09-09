@@ -15,6 +15,7 @@ non funziona su questa mano, questi test lo dicono.
     python test_mano_reale.py
 """
 
+import random
 import sys
 
 import config
@@ -28,21 +29,43 @@ SCALE = 0.15
 # Misure reali, da diagnosi.txt. Per ogni posa:
 #   (indice teso, medio teso, pollice-indice, pollice-medio, dita)
 # I valori sono le mediane; gli estremi sono nel report.
-POSE = {
+#
+# Le mani sono DUE, ed e' il punto di questo file. Una soglia tarata su una
+# sola sembra sempre giusta: l'intervallo utile per la posa di controllo e'
+# (0.30, 0.45) sulla prima mano e (0.22, 0.37) sulla seconda, e un valore
+# scelto guardando solo la prima cade esattamente sopra il pinch della seconda.
+# E' successo davvero: 0.38 contro un pinch che misura 0.37, e non partivano
+# ne' click, ne' doppio click, ne' click destro.
+MANO_A = {
     "puntamento":   (0.93, 0.46, 1.19, 0.22, (1, 0, 0, 0)),
     "pinch_indice": (0.46, 0.84, 0.14, 0.98, (0, 1, 1, 1)),
     "pinch_medio":  (0.73, 0.47, 0.74, 0.12, (1, 0, 1, 1)),
     "pugno":        (0.27, 0.32, 0.20, 0.28, (0, 0, 0, 0)),
     "aperta":       (0.79, 0.94, 0.96, 1.29, (1, 1, 1, 1)),
+    # Il pinch a tre dita non era stato misurato su questa mano: qui e'
+    # ricostruito assumendo che entrambe le punte arrivino sul pollice. Sulla
+    # mano B, dove e' stato misurato davvero, i numeri sono simili.
+    "tre_dita":     (0.46, 0.47, 0.14, 0.16, (0, 0, 1, 1)),
 }
 
-# Come sopra, ma con il medio davvero disteso: e' il click destro fatto come
-# dice la guida. Il medio teso viene dalla posa "pollice + indice uniti", dove
-# la stessa mano lo tiene effettivamente esteso (0.84).
-# Il click destro nuovo: pollice + indice + medio tutti insieme. Entrambe le
-# punte toccano il pollice, quindi tutte e due le distanze scendono al valore
-# che l'indice ha nel pinch semplice (0.14 misurato).
-POSE["tre_dita"] = (0.46, 0.47, 0.14, 0.16, (0, 0, 1, 1))
+# Seconda mano, misurata dopo che la prima serie di correzioni aveva lasciato
+# fuori click, doppio click, click destro e zoom. Due differenze grosse: pinza
+# con l'indice molto piu' piegato (0.38 contro 0.46) e tiene TUTTE le dita
+# distese anche quando punta — il conteggio legge ^^^^, e il medio misura piu'
+# dell'indice. La seconda cosa da sola annullava lo zoom, che pretendeva il
+# medio chiuso su entrambe le mani.
+MANO_B = {
+    "puntamento":   (0.89, 1.06, 1.05, 1.44, (1, 1, 1, 1)),
+    "pinch_indice": (0.38, 0.80, 0.07, 0.87, (0, 1, 1, 1)),
+    "pugno":        (0.21, 0.24, 0.24, 0.22, (0, 0, 0, 0)),
+    "aperta":       (0.83, 0.99, 0.98, 1.35, (1, 1, 1, 1)),
+    "tre_dita":     (0.47, 0.44, 0.16, 0.10, (1, 0, 1, 1)),
+}
+
+HANDS = [("mano A", MANO_A), ("mano B", MANO_B)]
+
+POSE = MANO_A       # tabella attiva, la cambia _run_all
+LABEL = "mano A"
 
 FAILURES = []
 
@@ -51,13 +74,25 @@ def check(name, condition, detail=""):
     if condition:
         print("  ok    %s" % name)
     else:
-        print("  FALLITO  %s  %s" % (name, detail))
-        FAILURES.append(name)
+        print("  FALLITO  %s (%s)  %s" % (name, LABEL, detail))
+        FAILURES.append("%s [%s]" % (name, LABEL))
 
 
-def hand(pose, reacquired=False, wrist=(0.5, 0.8)):
-    """HandObservation che riproduce esattamente le distanze misurate."""
-    idx_ext, mid_ext, thumb_index, thumb_middle, fingers = POSE[pose]
+def hand(pose, reacquired=False, wrist=(0.5, 0.8), fingers=None, jitter=None):
+    """
+    HandObservation che riproduce esattamente le distanze misurate.
+
+    `jitter`, se dato, e' una funzione che sporca ogni grandezza: serve alla
+    sezione sul rumore piu' sotto.
+    """
+    idx_ext, mid_ext, thumb_index, thumb_middle, nominal = POSE[pose]
+    if fingers is None:
+        fingers = nominal
+    if jitter is not None:
+        idx_ext = jitter(idx_ext)
+        mid_ext = jitter(mid_ext)
+        thumb_index = jitter(thumb_index)
+        thumb_middle = jitter(thumb_middle)
     pts = [(0.0, 0.0)] * 21
     wx, wy = wrist
     pts[0] = (wx, wy)
@@ -164,13 +199,19 @@ def test_pointing_does_not_fire_right_click():
 
 
 def test_three_finger_pinch_right_clicks():
-    """Il click destro nuovo: pollice + indice + medio insieme."""
+    """
+    Il click destro nuovo: pollice + indice + medio insieme, emesso alla
+    CHIUSURA.
+    """
     r, clock = settled()
     feed(r, clock, "puntamento", frames=5)
-    feed(r, clock, "tre_dita", frames=6)
-    events = feed(r, clock, "puntamento", frames=8)
+    chiusura = feed(r, clock, "tre_dita", frames=6)
+    apertura = feed(r, clock, "puntamento", frames=8)
     check("il pinch a tre dita produce un click destro",
-          events.count(RIGHT_CLICK) == 1, "eventi: %r" % events)
+          (chiusura + apertura).count(RIGHT_CLICK) == 1,
+          "eventi: %r" % (chiusura + apertura))
+    check("e lo produce senza aspettare la riapertura",
+          RIGHT_CLICK in chiusura, "chiusura: %r" % chiusura)
 
 
 def test_three_finger_pinch_does_not_also_left_click():
@@ -194,6 +235,8 @@ def test_thumb_middle_alone_is_not_a_right_click():
     Su questa mano non era separabile dal puntamento: pollice-medio vale 0.22
     puntando contro 0.12 nel pinch, margine dentro il rumore del tracciamento.
     """
+    if "pinch_medio" not in POSE:
+        return          # posa non misurata su questa mano
     r, clock = settled()
     feed(r, clock, "aperta", frames=8)
     feed(r, clock, "pinch_medio", frames=6)
@@ -323,16 +366,227 @@ def test_cursor_freezes_when_starting_a_pinch():
           "pollice-indice %.2f, soglia %.2f" % (r.left_ratio, config.pinch_freeze_ratio))
 
 
+# ---------------------------------------------------------------------------
+# Rumore
+# ---------------------------------------------------------------------------
+# L'ampiezza NON viene dai percentili delle pose ferme: li' il modello e'
+# stabilissimo (indice teso 0.92 - 0.95) e un test costruito su quei numeri
+# dice sempre di si'. Viene dalla fase libera della stessa diagnosi, dove la
+# mano si muove davvero: indice teso fra 0.27 e 0.94, pollice-indice fra 0.09 e
+# 1.30. E' li' che le soglie vengono attraversate per sbaglio.
+NOISE = 0.06          # oscillazione continua
+SPIKE = 0.22          # fotogramma sporco
+SPIKE_RATE = 0.10     # uno su dieci
+
+
+def noisy(seed):
+    """Sporcatore deterministico: stesso seme, stessa sequenza."""
+    rng = random.Random(seed)
+
+    def jitter(value):
+        out = value + rng.uniform(-NOISE, NOISE)
+        if rng.random() < SPIKE_RATE:
+            out -= rng.uniform(0.0, SPIKE)
+        return max(0.02, out)
+
+    return jitter
+
+
+def feed_noisy(r, clock, pose, frames, jitter, fingers=None, cursor=(960, 540)):
+    events = []
+    for _ in range(frames):
+        h = hand(pose, fingers=fingers, jitter=jitter)
+        now = clock.advance()
+        r.prepare(h, now)
+        events.extend(name for name, _ in r.update(h, cursor, now))
+    return events
+
+
+def test_click_survives_the_noise():
+    """
+    Venti click di fila con le misure che ballano: devono uscire tutti e venti.
+
+    Prima ne usciva una parte. Ogni fotogramma in cui l'indice scendeva sotto
+    la soglia della posa azzerava i rilevatori, e azzerarli vuol dire
+    DISARMARLI: da li' servivano tre fotogrammi a mano ben aperta prima di
+    poter cliccare di nuovo, che con le dita gia' in chiusura non arrivavano
+    mai. E' il "click a mala pena".
+    """
+    fatti = 0
+    for seed in range(20):
+        jitter = noisy(seed)
+        r, clock = settled()
+        feed_noisy(r, clock, "puntamento", 8, jitter)
+        events = feed_noisy(r, clock, "pinch_indice", 6, jitter)
+        events += feed_noisy(r, clock, "puntamento", 10, jitter)
+        if events.count(LEFT_CLICK) == 1:
+            fatti += 1
+    check("venti click su venti anche col rumore", fatti == 20,
+          "usciti %d/20" % fatti)
+
+
+def test_right_click_survives_the_noise():
+    fatti = 0
+    for seed in range(20):
+        jitter = noisy(seed)
+        r, clock = settled()
+        feed_noisy(r, clock, "puntamento", 8, jitter)
+        events = feed_noisy(r, clock, "tre_dita", 8, jitter)
+        events += feed_noisy(r, clock, "puntamento", 10, jitter)
+        if events.count(RIGHT_CLICK) == 1 and LEFT_CLICK not in events:
+            fatti += 1
+    check("venti click destri su venti anche col rumore", fatti == 20,
+          "usciti %d/20" % fatti)
+
+
+def test_drag_survives_three_noisy_seconds():
+    """
+    "il drag si stacca da solo": tre secondi di trascinamento con le misure che
+    ballano non devono produrre nessun DRAG_END.
+    """
+    rotti = []
+    for seed in range(10):
+        jitter = noisy(seed)
+        r, clock = settled()
+        feed_noisy(r, clock, "puntamento", 8, jitter)
+        events = feed_noisy(r, clock, "pinch_indice", 15, jitter)
+        if DRAG_START not in events:
+            rotti.append("seed %d: il drag non parte" % seed)
+            continue
+        events = feed_noisy(r, clock, "pinch_indice", 90, jitter)   # 3 secondi
+        if DRAG_END in events or not r.dragging:
+            rotti.append("seed %d: staccato" % seed)
+    check("il drag regge tre secondi di rumore", not rotti,
+          "; ".join(rotti))
+
+
+def test_drag_releases_when_you_open_the_hand():
+    """Ma deve staccarsi quando lo vuoi tu, anche col rumore."""
+    r, clock = settled()
+    jitter = noisy(7)
+    feed_noisy(r, clock, "puntamento", 8, jitter)
+    feed_noisy(r, clock, "pinch_indice", 20, jitter)
+    check("il drag e' attivo", r.dragging)
+    events = feed_noisy(r, clock, "puntamento", 10, jitter)
+    check("riaprendo la mano il drag si chiude", DRAG_END in events,
+          "eventi: %r" % events)
+
+
+def test_finger_count_flicker_does_not_eat_the_click():
+    """
+    Il conteggio delle dita sbanda: durante il pinch pollice+indice il medio
+    resta esteso, e ogni tanto le dita vengono lette ^^__ — cioe' la posa di
+    scroll.
+
+    Non e' innocuo: riconoscere lo scroll AZZITTISCE i due rilevatori di pinch,
+    quindi finche' dura non esce ne' il click ne' il click destro. La posa di
+    scroll deve chiedere anche che indice e medio siano davvero distesi, cosa
+    che nel pinch non sono (indice 0.46).
+    """
+    r, clock = settled()
+    feed(r, clock, "puntamento", frames=8)
+    feed_noisy(r, clock, "pinch_indice", 6, noisy(3), fingers=(1, 1, 0, 0))
+    events = feed(r, clock, "puntamento", frames=10)
+    check("il click esce anche se le dita vengono lette come scroll",
+          events.count(LEFT_CLICK) == 1, "eventi: %r" % events)
+
+
+def test_finger_count_flicker_does_not_eat_the_right_click():
+    r, clock = settled()
+    feed(r, clock, "puntamento", frames=8)
+    events = feed_noisy(r, clock, "tre_dita", 8, noisy(3), fingers=(1, 1, 0, 0))
+    events += feed(r, clock, "puntamento", frames=10)
+    check("il click destro esce anche col conteggio dita sbandato",
+          events.count(RIGHT_CLICK) == 1, "eventi: %r" % events)
+
+
+def test_left_click_after_an_interrupted_right_click():
+    """
+    Il click destro veniva annullato con un flag, alzato alla chiusura del
+    pinch a tre dita e abbassato solo dal fronte di apertura. Se qualcosa
+    faceva sparire quel fronte — un gate, un azzeramento, la posa di scroll —
+    il flag restava alzato e si mangiava il PRIMO CLICK SINISTRO successivo.
+
+    Qui il click destro viene interrotto da un pugno, che blocca il gate, e poi
+    si prova a cliccare normalmente.
+    """
+    r, clock = settled()
+    feed(r, clock, "puntamento", frames=8)
+    events = feed(r, clock, "tre_dita", frames=6)
+    check("il click destro e' uscito", RIGHT_CLICK in events,
+          "eventi: %r" % events)
+    feed(r, clock, "pugno", frames=10)        # gesto interrotto a meta'
+    feed(r, clock, "aperta", frames=10)
+    feed(r, clock, "puntamento", frames=5)
+    feed(r, clock, "pinch_indice", frames=6)
+    events = feed(r, clock, "puntamento", frames=10)
+    check("il click sinistro successivo non viene mangiato",
+          events.count(LEFT_CLICK) == 1, "eventi: %r" % events)
+
+
+def test_the_control_pose_has_margin_during_a_pinch():
+    """
+    Pinzando, la posa di controllo deve reggere un calo di 0.10 dell'estensione
+    dell'indice senza spegnersi.
+
+    E' l'invariante che mancava, ed e' il difetto che ha lasciato fuori click,
+    doppio click e click destro su una mano vera: la soglia stava a 0.38 e quel
+    pinch misura 0.37 di 5o percentile, 0.38 di mediana. Non era sbagliata di
+    molto — era esattamente sopra la gesture, che e' il modo peggiore. Una
+    soglia sola su un solo dito non puo' avere questo margine su tutte le mani:
+    lo da' il secondo dito (basta che passi indice O medio).
+    """
+    idx, mid, ti, tm, fingers = POSE["pinch_indice"]
+    r, clock = settled()
+    feed(r, clock, "puntamento", frames=5)
+    events = []
+    for _ in range(6):
+        h = hand("pinch_indice")
+        h.index_extension = idx - 0.10
+        now = clock.advance()
+        r.prepare(h, now)
+        events.extend(name for name, _ in r.update(h, (960, 540), now))
+    events += feed(r, clock, "puntamento", frames=10)
+    check("il click esce con 0.10 di margine sotto l'indice misurato",
+          events.count(LEFT_CLICK) == 1,
+          "indice %.2f contro soglia %.2f (medio %.2f contro %.2f), eventi %r"
+          % (idx - 0.10, config.index_control_ratio, mid,
+             config.middle_control_ratio, events))
+
+
+def test_noise_alone_produces_nothing():
+    """La rete di sicurezza: rumore su una mano che punta e basta non clicca."""
+    sporchi = []
+    for seed in range(10):
+        r, clock = settled()
+        events = feed_noisy(r, clock, "puntamento", 120, noisy(100 + seed))
+        if events:
+            sporchi.append("seed %d: %r" % (seed, events))
+    check("puntare con rumore per 4 secondi non produce eventi", not sporchi,
+          "; ".join(sporchi))
+
+
 def _run_all():
-    print("soglie attive: indice >=%.2f | pinch <%.2f / >%.2f | tre dita <%.2f\n"
-          % (config.index_control_ratio, config.pinch_close_ratio,
-             config.pinch_open_ratio, config.right_pinch_close_ratio))
+    global POSE, LABEL
+    print("soglie attive: indice >=%.2f o medio >=%.2f | pinch <%.2f / >%.2f "
+          "| tre dita <%.2f\n"
+          % (config.index_control_ratio, config.middle_control_ratio,
+             config.pinch_close_ratio, config.pinch_open_ratio,
+             config.right_pinch_close_ratio))
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    for test in tests:
-        print(test.__name__)
-        test()
-        print()
-    return len(tests)
+    total = 0
+    for label, table in HANDS:
+        POSE, LABEL = table, label
+        print("-" * 58)
+        print("   %s" % label)
+        print("-" * 58)
+        for test in tests:
+            print(test.__name__)
+            test()
+            print()
+        total += len(tests)
+    POSE, LABEL = MANO_A, "mano A"
+    return total
 
 
 def main():

@@ -31,8 +31,8 @@ import config
 from gesture_recognizer import (
     GestureRecognizer, LEFT_CLICK, RIGHT_CLICK, DRAG_START, DRAG_END, SCROLL,
 )
-from hand_tracker import HandTracker, INDEX_TIP
-from mouse_controller import MouseController
+from hand_tracker import HandTracker, INDEX_TIP, THUMB_TIP
+from mouse_controller import MouseController, system_double_click_time
 from perf import PerformanceGovernor
 from settings_gui import create_settings_gui
 from shared_state import get_running, set_running
@@ -46,6 +46,11 @@ WINDOW_NAME = "AirMouse"
 # imshow + pollKey() = 0.37 ms. Il modello ne costa 14: la finestra di debug
 # costava piu' del riconoscimento, e quei 15 ms erano latenza pura sul cursore.
 _POLL_KEY = getattr(cv2, "pollKey", None)
+
+
+def _not_pinching(hand):
+    """True se pollice e indice sono ben separati su questa mano."""
+    return hand.ratio(THUMB_TIP, INDEX_TIP) > config.pinch_open_ratio
 
 
 def _pump_window():
@@ -115,6 +120,7 @@ class AirMouseApp:
                 min_tracking_confidence=config.min_tracking_confidence,
             )
             self._applied = self._config_snapshot()
+            self._clamp_double_click_time()
             print("Webcam aperta a %dx%d" % self.webcam_manager.actual_resolution())
             return True
         except SystemExit:
@@ -122,6 +128,30 @@ class AirMouseApp:
         except Exception as exc:
             print("Errore durante l'inizializzazione: %s" % exc)
             return False
+
+    @staticmethod
+    def _clamp_double_click_time():
+        """
+        Tiene la finestra del doppio click dentro quella vera del sistema.
+
+        `GetDoubleClickTime` e' di fabbrica 500 ms ma l'utente puo' averlo
+        abbassato dal pannello di controllo, e un valore piu' largo del suo
+        significa mandare due click che il sistema non accoppiera' mai: si
+        vedrebbe come "il doppio click non lo prende" senza alcun indizio del
+        perche'. Il margine copre il fotogramma in cui l'evento viene emesso.
+        """
+        if config.double_click_time <= 0.0:
+            return
+        system = system_double_click_time()
+        limit = max(0.15, system - 0.06)
+        if config.double_click_time > limit:
+            # Si avvisa solo se il taglio e' tale da cambiare l'uso: qualche
+            # centesimo di margine non merita una riga di log all'avvio.
+            if config.double_click_time - limit > 0.05:
+                print("Doppio click: finestra ridotta da %.2f a %.2f s "
+                      "(il sistema ne concede %.2f)"
+                      % (config.double_click_time, limit, system))
+            config.double_click_time = limit
 
     # ------------------------------------------------------------------
     def run(self):
@@ -217,7 +247,16 @@ class AirMouseApp:
             # cursore singhiozzava e i trascinamenti si spezzavano a meta'.
             # Qui un buco breve viene semplicemente ignorato.
             self._missing_frames += 1
-            if self._missing_frames > config.hand_lost_frames:
+            # Durante un trascinamento si tollera il doppio dei buchi. Perdere
+            # la mano li' significa lasciare andare quello che stai spostando,
+            # ed e' proprio muovendo in fretta — cioe' trascinando — che il
+            # modello salta qualche fotogramma. Il tetto resta basso in
+            # assoluto: mezzo secondo, non di piu', o un tasto resterebbe
+            # premuto con la mano ormai fuori campo.
+            tolerance = config.hand_lost_frames
+            if self.gestures.dragging:
+                tolerance *= 2
+            if self._missing_frames > tolerance:
                 self._hand_streak = 0
                 for name, payload in self.gestures.hand_lost(now):
                     self._dispatch(name, payload)
@@ -245,7 +284,9 @@ class AirMouseApp:
     def _dispatch(self, name, payload):
         mc = self.mouse_controller
         if name == LEFT_CLICK:
-            mc.left_click()
+            # payload "double" = secondo click di un doppio: va premuto sul
+            # pixel ESATTO del primo, o Windows non li accoppia.
+            mc.left_click(same_spot=payload == "double")
         elif name == RIGHT_CLICK:
             mc.right_click()
         elif name == DRAG_START:
@@ -259,10 +300,20 @@ class AirMouseApp:
         if not config.enable_zoom or hand is None or other is None:
             self.mouse_controller.handle_zoom(0.0, False, now)
             return
-        # Lo zoom richiede una posa esplicita: solo gli indici estesi su
-        # entrambe le mani. Cosi' non parte mentre si usa il mouse normalmente.
+        # Indici estesi su entrambe le mani, e nessuna delle due che pinza.
+        #
+        # Prima si chiedeva anche il medio CHIUSO su entrambe, e su una mano
+        # vera quella condizione non si verifica mai: misurata con
+        # `diagnose.py`, valida in 0 fotogrammi su 350. Chi punta l'indice
+        # tiene spesso le altre dita distese — sulla stessa mano il conteggio
+        # legge ^^^^ anche nella posa di puntamento, e il medio misura 1.06 di
+        # estensione, cioe' piu' dell'indice.
+        #
+        # La condizione che serve davvero e' un'altra: che nessuna delle due
+        # mani stia pinzando. Cosi' lo zoom non puo' partire mentre clicchi o
+        # trascini, che e' l'unica sovrapposizione pericolosa.
         active = bool(hand.fingers[0] and other.fingers[0]
-                      and not hand.fingers[1] and not other.fingers[1])
+                      and _not_pinching(hand) and _not_pinching(other))
         if not active:
             self.mouse_controller.handle_zoom(0.0, False, now)
             return
@@ -384,8 +435,9 @@ class AirMouseApp:
                 "" if g.left_pinch.armed else "  DISARMATO"),
             "tre dita %.2f (soglia %.2f)  poll-medio %.2f" % (
                 g.right_ratio, config.right_pinch_close_ratio, g.middle_ratio),
-            "indice teso %.2f (soglia %.2f)" % (
-                g.index_extension, config.index_control_ratio),
+            "dita tese: indice %.2f medio %.2f (posa %.2f, scroll %.2f)" % (
+                g.index_extension, g.middle_extension,
+                config.index_control_ratio, config.scroll_extension_ratio),
             "cursore: %s%s" % (
                 "BLOCCATO" if g.frozen else "libero",
                 "   2o click entro %.2fs" % g.double_click_window()

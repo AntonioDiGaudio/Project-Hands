@@ -168,24 +168,44 @@ def _app():
 
 
 def _two_hands(index_up_a=1, middle_up_a=0, index_up_b=1, middle_up_b=0,
-               separation=1.0):
-    a = make_hand(fingers=(index_up_a, middle_up_a, 0, 0), wrist=(0.3, 0.6),
-                  index_extension=EXT_POINTING)
-    b = make_hand(fingers=(index_up_b, middle_up_b, 0, 0),
+               separation=1.0, pinch_a=1.0, pinch_b=1.0):
+    a = make_hand(pinch_a, fingers=(index_up_a, middle_up_a, 0, 0),
+                  wrist=(0.3, 0.6), index_extension=EXT_POINTING)
+    b = make_hand(pinch_b, fingers=(index_up_b, middle_up_b, 0, 0),
                   wrist=(0.3 + separation * 0.2, 0.6),
                   index_extension=EXT_POINTING)
     return a, b
 
 
 def test_pose_gate():
+    """
+    La posa e': indici estesi su entrambe le mani, e nessuna delle due che
+    pinza.
+
+    Prima si chiedeva anche il medio CHIUSO su entrambe. Misurato con
+    `diagnose.py` su una mano vera: quella condizione valeva in 0 fotogrammi su
+    350, perche' chi punta l'indice tiene spesso le altre dita distese — sulla
+    stessa mano il medio misura 1.06 di estensione, piu' dell'indice. Lo zoom
+    non poteva partire, e nessun errore lo diceva.
+    """
     a = _app()
     with WheelRecorder() as rec:
         t = 1000.0
-        # Posa sbagliata: il medio esteso su una delle due mani.
-        for i in range(10):
-            h1, h2 = _two_hands(middle_up_b=1, separation=1.0 + i * 0.15)
+        # Una mano che pinza: lo zoom non deve rubare il click.
+        for i in range(12):
+            h1, h2 = _two_hands(pinch_a=0.2, separation=1.0 + i * 0.20)
             a._handle_zoom(h1, h2, t + i)
-        check("con il medio esteso lo zoom non parte", rec.deltas == [],
+        check("con una mano che pinza lo zoom non parte", rec.deltas == [],
+              "delta: %r" % rec.deltas)
+
+        # Il medio esteso invece NON deve piu' bloccare niente.
+        rec.deltas.clear()
+        a.mouse_controller = new_controller()
+        for i in range(12):
+            h1, h2 = _two_hands(middle_up_a=1, middle_up_b=1,
+                                separation=1.0 + i * 0.20)
+            a._handle_zoom(h1, h2, t + 50 + i)
+        check("con il medio esteso lo zoom parte lo stesso", bool(rec.deltas),
               "delta: %r" % rec.deltas)
 
         # Una mano sola: niente zoom.
@@ -196,7 +216,7 @@ def test_pose_gate():
         check("con una mano sola lo zoom non parte", rec.deltas == [],
               "delta: %r" % rec.deltas)
 
-        # Posa giusta: indici estesi, medi chiusi, mani che si allontanano.
+        # Posa giusta: indici estesi, mani aperte che si allontanano.
         rec.deltas.clear()
         a.mouse_controller = new_controller()
         for i in range(12):
@@ -206,6 +226,29 @@ def test_pose_gate():
               "delta: %r" % rec.deltas)
         check("e lo produce in scatti interi",
               all(abs(d) >= 120 for d in rec.deltas), "delta: %r" % rec.deltas)
+
+
+def test_zoom_survives_a_lost_hand():
+    """
+    Perdere una mano per qualche fotogramma non deve azzerare il riferimento.
+
+    Misurato: con due mani in campo il modello le vede insieme solo nel 65% dei
+    fotogrammi. Azzerando a ogni buco, la variazione riparte da capo e il 18%
+    richiesto non si raggiunge mai — che e' esattamente il motivo per cui lo
+    zoom "non funzionava".
+    """
+    a = _app()
+    with WheelRecorder() as rec:
+        t = 1000.0
+        for i in range(14):
+            h1, h2 = _two_hands(separation=1.0 + i * 0.12)
+            if i % 3 == 2:
+                # Fotogramma in cui la seconda mano non viene rilevata.
+                a._handle_zoom(h1, None, t + i * 0.05)
+            else:
+                a._handle_zoom(h1, h2, t + i * 0.05)
+    check("lo zoom parte anche perdendo una mano ogni tre fotogrammi",
+          bool(rec.deltas), "delta: %r" % rec.deltas)
 
 
 def test_zoom_disabled_is_inert():

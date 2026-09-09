@@ -43,10 +43,11 @@ Tutte a una mano. La mano non dominante serve solo a zoom e slide.
 | Indice non ripiegato | attiva il controllo; il cursore segue la punta dell'indice |
 | Mano chiusa a pugno | tutto inerte, nessuna gesture possibile |
 | Pollice + indice, tocco breve | click sinistro |
+| Pollice + indice, due volte di fila | doppio click |
 | Pollice + indice, tenuto | drag (premi, sposta, rilascia riaprendo) |
-| Pollice + **medio disteso** | click destro (col medio ripiegato non conta: vedi sotto) |
+| Pollice + indice + **medio**, tutti insieme | click destro (esce appena si toccano) |
 | Indice + medio estesi, su e giu' | scroll |
-| Indici estesi su entrambe le mani | zoom |
+| Indici estesi su entrambe le mani, nessuna che pinza | zoom |
 
 Tasti nella finestra webcam: `ESC` esci, `D` scheletro, `O` pannello,
 `H` nascondi la finestra.
@@ -76,35 +77,81 @@ La distinzione fra pugno e pinch merita una nota, perche' in entrambi pollice e
 indice sono vicini. A separarli e' quanto e' disteso l'indice, misurato **dalla
 nocca** e non dal polso:
 
-    indice teso      ~1.3 - 1.5
-    indice che pinza ~0.9 - 1.2
-    pugno chiuso     ~0.4 - 0.6
+                      mano A   mano B
+    indice teso            0.93     0.89
+    indice che pinza       0.46     0.38
+    pugno chiuso           0.27     0.21
 
-Misurando dal polso, il pinch fa scendere la punta dell'indice sotto la
-falange e la mano risulta "chiusa" proprio mentre stai cliccando: il gate
-scatta e annulla click e drag.
+Sono misure vere, prese con `diagnose.py` su due mani diverse. I numeri che
+stavano qui prima ("1.3 - 1.5") erano stimati e sbagliati di un fattore 1.6, e
+le soglie di fabbrica ci si appoggiavano: il default coincideva col valore a
+dito teso e bloccava ogni click.
 
-Lo stesso vale per il **medio**, ed e' la lezione piu' cara di questo progetto.
-Il click destro e' "pollice + medio uniti", ma nella normale posa di puntamento
-il medio e' ripiegato nel palmo e il pollice gli si appoggia sopra: la distanza
-fra le due punte vale gia' circa `0.35` della mano, cioe' meno della soglia di
-chiusura. Senza sapere se il medio e' **disteso**, la posa di puntamento e' un
-pinch medio a tutti gli effetti, con due conseguenze misurate:
+Misurando dal polso invece che dalla nocca, il pinch fa scendere la punta
+dell'indice sotto la falange e la mano risulta "chiusa" proprio mentre stai
+cliccando: il gate scatta e annulla click e drag.
 
-* il cursore restava congelato **120 fotogrammi su 120**, cioe' per sempre;
-* il primo momento in cui aprivi la mano partiva un click destro non richiesto.
+**Un dito solo non basta a decidere.** Guarda la colonna della mano B: fra il
+suo pugno (0.21) e il suo pinch (0.38) e la mano A che vuole una soglia piu'
+alta, l'intervallo che va bene per entrambe e' (0.30, 0.37). Sette centesimi,
+meno del rumore del modello — e una soglia scelta guardando una mano sola
+finisce esattamente sopra il pinch dell'altra. E' successo: 0.38 contro un
+pinch che misura 0.37, e su quella mano non partivano ne' click, ne' doppio
+click, ne' click destro.
 
-Per questo il pinch destro viene proprio ignorato finche' `middle_extension`
-non supera `middle_control_ratio`.
+Per questo la posa si accontenta che passi **indice O medio**. Il medio separa
+le stesse due pose molto meglio, su entrambe le mani, perche' quando pinzi
+l'indice il medio resta disteso:
 
-In piu' il cursore si **congela** appena il pinch inizia a chiudersi: siccome il
-cursore segue la punta dell'indice, che e' anche il dito che si muove per
-pinzare, senza questo accorgimento ogni click cadrebbe qualche pixel sotto il
-bersaglio. Il congelamento richiede pero' un **avvicinamento in corso**, non un
-semplice "sotto soglia": e' un livello, e le pose ferme che ci stanno sotto
-resterebbero congelate all'infinito. C'e' anche un tetto di durata
-(`pinch_freeze_max_time`), perche' delle dita ferme a mezz'aria non devono
-tenere il cursore in ostaggio.
+                      mano A   mano B
+    medio, pinch           0.84     0.80
+    medio, pugno           0.32     0.24
+
+Il **click destro** e' un pinch a tre dita, non "pollice + medio". Il motivo e'
+la stessa misura: nella normale posa di puntamento il medio e' ripiegato nel
+palmo col pollice appoggiato sopra, quindi la distanza pollice-medio vale gia'
+0.22 contro lo 0.12 del pinch voluto — margine dentro il rumore. La grandezza
+del pinch a tre dita e' invece `max(pollice-indice, pollice-medio)`, cioe' "la
+piu' lontana delle due punte": scende sotto soglia solo quando toccano
+entrambe, e nessuna posa di riposo lo fa. Il click esce alla **chiusura**:
+aspettare la riapertura significava sperare che entrambe le punte tornassero
+sopra la soglia con la macchina a stati ancora intatta, e qualunque
+azzeramento nel frattempo faceva sparire il click invece di ritardarlo.
+
+Il gate, infine, blocca l'**ingresso** di una gesture e non ne uccide una gia'
+avviata. E' la differenza fra un fotogramma rumoroso che ritarda un click e uno
+che stacca un trascinamento a meta'.
+
+### Il cursore sta sulla punta dell'indice
+
+Ed e' la punta che si sposta quando pinzi: misurata su una mano vera,
+l'estensione dell'indice passa da 0.93 a 0.46 chiudendo il pinch, cioe' la
+punta scende di mezza lunghezza di dito. Sullo schermo sono **113 pixel**
+(misurati su `test_cursore.py`, overscan 1.6 su 1080p). Senza contromisure ogni
+click cade parecchio sotto il bersaglio.
+
+Per questo il cursore si **congela** appena il gesto comincia. Il blocco parte
+da due segnali:
+
+* le dita che si avvicinano (`pinch_freeze_ratio` + `pinch_approach_drop`);
+* l'indice che si **piega** (`index_curl_drop`), che e' la misura piu' diretta
+  del problema e se ne accorge prima — all'inizio del pinch si muove
+  soprattutto il pollice, quindi la distanza fra le due punte reagisce tardi.
+
+Entrambi chiedono un movimento IN CORSO e non un semplice "sotto soglia": sono
+livelli, e le pose ferme che ci stanno sotto resterebbero congelate
+all'infinito. C'e' anche un tetto di durata (`pinch_freeze_max_time`), perche'
+delle dita ferme a mezz'aria non devono tenere il cursore in ostaggio.
+
+Quando il blocco finisce, lo scarto accumulato non viene riassorbito muovendo
+il cursore ma diventa un **offset della mappatura**, che decade da solo — e non
+decade affatto mentre un tasto e' premuto. Con l'animazione precedente il drag
+partiva trascinando l'oggetto per un centinaio di pixel da solo.
+
+Il **doppio click** ha un vincolo in piu': Windows accoppia due click solo se
+cadono a pochi pixel l'uno dall'altro (`SM_CXDOUBLECLK`, di fabbrica 4) e
+dentro `GetDoubleClickTime`. Il secondo click viene quindi premuto sul pixel
+esatto del primo, e la finestra usata viene limitata a quella vera del sistema.
 
 ### Unita' della rotellina
 
@@ -274,14 +321,32 @@ caricamento si generano da li'.
 
 ```bash
 python test_gestures.py    # macchina a stati, senza webcam
+python test_mano_reale.py  # stessa macchina, sulle misure di una mano vera
+python test_cursore.py     # dove cade il cursore, senza toccare il mouse
 python test_pipeline.py    # pipeline completa con webcam, senza toccare il mouse
 python calibrate.py        # misura le soglie sulla tua mano
 python test_calibrate.py   # procedura di calibrazione, senza webcam
 python test_zoom.py        # zoom a due mani, senza webcam e senza mouse
 ```
 
-`test_gestures.py` copre in particolare i casi che producevano falsi positivi,
-fra cui il mignolo chiuso che generava un click destro al secondo.
+I tre livelli servono a cose diverse, e la differenza e' costata cara.
+
+* `test_gestures.py` verifica la logica su una mano sintetica. Passava al 100%
+  mentre in mano all'utente non partiva un click: i numeri che dava in pasto
+  erano inventati.
+* `test_mano_reale.py` usa le misure registrate da `diagnose.py` e gira su
+  **due mani diverse**, perche' una sola non basta a scoprire una soglia
+  sbagliata: i valori di una mano sembrano sempre confermare la soglia tarata
+  su quella mano. Ha anche una sezione col **rumore**, dove le grandezze
+  ballano come ballano davvero durante il movimento. E' li' che si vedono i
+  sintomi veri — click persi, drag che si stacca, click destro che non esce.
+  Per aggiungere la tua mano: lancia `diagnose.py`, copia le mediane in una
+  nuova tabella accanto a `MANO_A` e `MANO_B`.
+* `test_cursore.py` muove il cursore per davvero attraverso `MouseController`
+  (con `SetCursorPos` sostituito da un registratore) e misura i **pixel**. Gli
+  altri due dicono che un evento esce, non dove cade: "il puntatore scende
+  cliccando" e "il doppio click non lo prende" non sono eventi mancanti, sono
+  eventi giusti nel posto sbagliato.
 
 ## Struttura
 

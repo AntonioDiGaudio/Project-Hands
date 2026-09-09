@@ -195,8 +195,14 @@ def compute(samples):
             # avvicinarsi il cursore si inchioda. Non e' piu' da solo a decidere
             # (serve anche un avvicinamento in corso), ma resta il livello oltre
             # il quale il blocco non e' nemmeno preso in considerazione.
+            #
+            # Il margine e' il 10% dell'intervallo, non il 20%: e' un livello di
+            # abilitazione, non una soglia di scatto, e ogni centesimo di ritardo
+            # qui e' cursore che scende prima che il blocco intervenga. A
+            # difendere dai falsi positivi c'e' il fatto che la posa di
+            # puntamento resta comunque sopra questo valore.
             gap = open_low - pinch_high
-            out["pinch_freeze_ratio"] = round(open_low - gap * 0.20, 2)
+            out["pinch_freeze_ratio"] = round(open_low - gap * 0.10, 2)
         else:
             out["_pinch_overlap"] = (round(pinch_high, 2), round(open_low, 2))
 
