@@ -45,8 +45,8 @@ POSES = [
      "indice ben teso, le altre dita chiuse, pollice staccato"),
     ("pinch_indice", "POLLICE + INDICE UNITI",
      "il gesto del click sinistro: le punte si toccano"),
-    ("pinch_medio", "POLLICE + MEDIO UNITI",
-     "il gesto del click destro: medio teso, punte che si toccano"),
+    ("pinch_medio", "POLLICE + INDICE + MEDIO",
+     "il click destro: tutte e tre le punte che si toccano insieme"),
     ("pugno", "PUGNO CHIUSO", "tutte le dita ripiegate sul palmo"),
     ("aperta", "MANO BEN APERTA", "tutte e cinque le dita larghe"),
 ]
@@ -167,7 +167,7 @@ class Free:
         self.left_closed += int(g.left_pinch.closed)
         self.right_armed += int(g.right_pinch.armed)
         self.right_closed += int(g.right_pinch.closed)
-        self.middle_ok += int(g.middle_pointing)
+        self.middle_ok += int(g.right_pinch.armed)
         self.pointing += int(g.pointing)
         for name, payload in events:
             self.events.append((round(now, 2), name, payload))
@@ -220,10 +220,9 @@ def live_lines(hand, g):
         ("indice teso   %.2f   soglia %.2f  %s"
          % (hand.index_extension, config.index_control_ratio,
             "ok" if g.pointing else "BLOCCA TUTTO"), ok(g.pointing)),
-        ("medio teso    %.2f   soglia %.2f  %s"
-         % (hand.middle_extension, config.middle_control_ratio,
-            "ok" if g.middle_pointing else "niente click destro"),
-         ok(g.middle_pointing)),
+        ("tre dita      %.2f   chiude sotto %.2f"
+         % (max(hand.ratio(THUMB_TIP, INDEX_TIP), hand.ratio(THUMB_TIP, MIDDLE_TIP)),
+            config.right_pinch_close_ratio), None),
         "pollice-indice %.2f   chiude sotto %.2f"
         % (hand.ratio(THUMB_TIP, INDEX_TIP), config.pinch_close_ratio),
         "pollice-medio  %.2f   chiude sotto %.2f"
@@ -403,7 +402,7 @@ def write_report(recordings, free, zoom=None):
 
     w("Soglie attive (da Profiles/settings.txt)\n")
     w("-" * 70 + "\n")
-    for key in ("index_control_ratio", "middle_control_ratio",
+    for key in ("index_control_ratio",
                 "pinch_close_ratio", "pinch_open_ratio", "pinch_freeze_ratio",
                 "right_pinch_close_ratio", "right_pinch_open_ratio",
                 "pinch_approach_drop", "drag_hold_time", "require_pointing_pose",
@@ -433,7 +432,7 @@ def write_report(recordings, free, zoom=None):
         w("  fotogrammi con mano      : %d\n" % free.frames)
         w("  posa di controllo ok     : %d  (%.0f%%)\n"
           % (free.pointing, 100 * free.pointing / n))
-        w("  medio disteso ok         : %d  (%.0f%%)\n"
+        w("  pinch a tre dita armato  : %d  (%.0f%%)\n"
           % (free.middle_ok, 100 * free.middle_ok / n))
         w("  pinch sx armato          : %d  (%.0f%%)\n"
           % (free.left_armed, 100 * free.left_armed / n))
@@ -539,19 +538,16 @@ def verdict(recordings, free, zoom=None):
                          % (closed + (open_ - closed) * 0.25,
                             closed + (open_ - closed) * 0.60))
 
-    # 3. Il click destro.
+    # 3. Il click destro, ora pinch a tre dita.
     if ok(mpinch):
-        low = pct(mpinch.middle_ext, 0.05)
-        if low < config.middle_control_ratio:
-            lines.append(
-                "BLOCCANTE per il click destro: nel pinch pollice+medio il medio "
-                "misura %.2f contro middle_control_ratio %.2f, quindi la gesture "
-                "viene ignorata." % (low, config.middle_control_ratio))
-        closed = pct(mpinch.thumb_middle, 0.95)
+        three = [max(a, b) for a, b in zip(mpinch.thumb_index, mpinch.thumb_middle)]
+        closed = pct(three, 0.95)
         if closed >= config.right_pinch_close_ratio:
             lines.append(
-                "BLOCCANTE per il click destro: pollice-medio resta a %.2f contro "
-                "una chiusura di %.2f." % (closed, config.right_pinch_close_ratio))
+                "BLOCCANTE per il click destro: nel pinch a tre dita la punta piu' "
+                "lontana resta a %.2f contro una chiusura di %.2f. Avvicina "
+                "indice e medio al pollice insieme."
+                % (closed, config.right_pinch_close_ratio))
 
     # 4. Cosa e' successo davvero provando.
     if free.frames:

@@ -273,10 +273,13 @@ class GestureRecognizer:
         self.right_ratio = 9.9
         self.index_extension = 0.0
         self.middle_extension = 0.0
+        self.middle_ratio = 9.9   # pollice-medio, per la UI di debug
         self.pointing = False
-        self.middle_pointing = False
         self.frozen = False       # esito di cursor_frozen() sull'ultimo frame
         self.gated_reason = ""
+        self._tip = None          # punta dell'indice, in unita' normalizzate
+        self._click_tip = None    # dov'era la punta all'ultimo click
+        self._suppress_left = False
 
     # ------------------------------------------------------------------
     def _sync_thresholds(self):
@@ -316,8 +319,11 @@ class GestureRecognizer:
         self.left_ratio = self.right_ratio = 9.9
         self.index_extension = 0.0
         self.middle_extension = 0.0
+        self.middle_ratio = 9.9
         self.pointing = False
-        self.middle_pointing = False
+        self._tip = None
+        self._click_tip = None
+        self._suppress_left = False
         self.reacquire_until = now + self.config.hand_reacquire_grace
         return events
 
@@ -339,20 +345,24 @@ class GestureRecognizer:
         self._prepared_at = now
         self._now = now
         if hand is None:
-            self.left_ratio = self.right_ratio = 9.9
+            self.left_ratio = self.right_ratio = self.middle_ratio = 9.9
             self.pointing = False
-            self.middle_pointing = False
+            self._tip = None
             self.gated_reason = ""
             return
 
         self.left_ratio = hand.ratio(THUMB_TIP, INDEX_TIP)
-        self.right_ratio = hand.ratio(THUMB_TIP, MIDDLE_TIP)
+        self.middle_ratio = hand.ratio(THUMB_TIP, MIDDLE_TIP)
+        # Click destro = pinch a tre dita. La grandezza e' "la piu' lontana
+        # delle due punte dal pollice": scende sotto soglia solo quando indice
+        # E medio toccano insieme, e questo la separa da ogni altra posa. Il
+        # solo pollice-medio non poteva funzionare: nella posa di puntamento il
+        # pollice e' gia' appoggiato sul medio ripiegato a 0.22, contro lo 0.12
+        # del pinch voluto.
+        self.right_ratio = max(self.left_ratio, self.middle_ratio)
+        self._tip = hand.point(INDEX_TIP)
         self.index_extension = hand.index_extension
         self.middle_extension = hand.middle_extension
-        # Il pinch destro ha senso solo con il medio DISTESO. Da ripiegato nel
-        # palmo, col pollice appoggiato sopra, la distanza pollice-medio vale
-        # gia' circa 0.35: e' la posa di puntamento, non un click destro.
-        self.middle_pointing = hand.middle_extension >= cfg.middle_control_ratio
         # Posa di controllo: l'indice non e' ripiegato sul palmo. Misurata
         # dalla nocca, quindi resta vera anche mentre l'indice si piega per
         # pinzare: e' esattamente il caso che prima annullava il click.
@@ -362,12 +372,7 @@ class GestureRecognizer:
         # cursor_frozen() legge il fotogramma corrente e non quello precedente.
         window = cfg.pinch_approach_window
         self.left_pinch.observe(self.left_ratio, now, window)
-        if self.middle_pointing:
-            self.right_pinch.observe(self.right_ratio, now, window)
-        else:
-            # Medio ripiegato: la misura non descrive un pinch e non deve ne'
-            # congelare il cursore ne' armare il rilevatore.
-            self.right_pinch.reset()
+        self.right_pinch.observe(self.right_ratio, now, window)
 
         if hand.reacquired:
             self.reacquire_until = now + cfg.hand_reacquire_grace
@@ -448,15 +453,14 @@ class GestureRecognizer:
         self._scroll_residual = 0.0
 
         # -- pinch --------------------------------------------------------
-        left_closed = self.left_pinch.step(now)
-        # Mutua esclusione: il pinch destro viene valutato solo se il sinistro
-        # e' aperto e nessun drag e' attivo. Qui NON si puo' usare reset(),
-        # che disarmerebbe il rilevatore destro a ogni click sinistro
-        # costringendo a riaprire la mano prima di poter cliccare a destra:
-        # basta tenerlo aggiornato senza lasciargli emettere fronti.
-        hold_right = not (self.state == _IDLE and not left_closed
-                          and self.middle_pointing)
-        self.right_pinch.step(now, hold=hold_right)
+        # La mutua esclusione va nel verso opposto rispetto a prima. Il pinch a
+        # tre dita CONTIENE quello a due: chiudendolo, l'indice tocca il pollice
+        # e il rilevatore sinistro si chiude per primo. Non si puo' quindi
+        # sospendere il destro quando il sinistro e' chiuso — sarebbe sempre.
+        # Si lasciano correre entrambi, e quando il destro si chiude annulla il
+        # click sinistro che era rimasto in sospeso (vedi _update_right).
+        self.left_pinch.step(now)
+        self.right_pinch.step(now, hold=self.state == _DRAGGING)
 
         events.extend(self._update_left(now))
         events.extend(self._update_right(now))
@@ -469,8 +473,28 @@ class GestureRecognizer:
         events = []
         pinch = self.left_pinch
 
+        if pinch.just_opened and self._suppress_left:
+            # Il pinch a tre dita ha gia' emesso il click destro: la riapertura
+            # dell'indice non deve produrre anche un click sinistro.
+            self._suppress_left = False
+            self.state = _IDLE
+            return events
+
         if self.state == _IDLE:
             if pinch.just_closed:
+                # Secondo pinch subito dopo un click: e' un doppio click.
+                # Il click parte QUI, alla chiusura, non alla riapertura: si
+                # risparmiano i fotogrammi di conferma del rilascio, che sono
+                # quello che faceva sforare i 500 ms di Windows.
+                if (cfg.double_click_time > 0.0
+                        and self.last_click_time > 0.0
+                        and pinch.close_time - self.last_click_time <= cfg.double_click_time
+                        and self.hand_speed <= cfg.max_gesture_speed):
+                    events.append((LEFT_CLICK, None))
+                    # Azzerato per non incatenare un terzo click.
+                    self.last_click_time = 0.0
+                    self._click_tip = self._tip
+                    self._suppress_left = True
                 self.state = _PENDING
                 self.pinch_start_time = pinch.close_time
                 self.pinch_start_pos = self._last_cursor
@@ -497,6 +521,7 @@ class GestureRecognizer:
                         and now - self.last_click_time >= cfg.click_cooldown):
                     events.append((LEFT_CLICK, None))
                     self.last_click_time = now
+                    self._click_tip = self._tip
                 self.state = _IDLE
             elif cfg.drag_mode_enabled and (now - self.pinch_start_time) >= cfg.drag_hold_time:
                 events.append((DRAG_START, None))
@@ -510,12 +535,24 @@ class GestureRecognizer:
         return events
 
     def _update_right(self, now):
-        """Click destro: emesso sul fronte di apertura, mai sullo stato."""
+        """
+        Click destro: pinch a tre dita, emesso sul fronte di apertura.
+
+        Alla chiusura non emette niente ma ANNULLA il click sinistro rimasto in
+        sospeso: chiudendo tre dita, l'indice tocca il pollice per primo e il
+        rilevatore sinistro e' gia' in `_PENDING`. Senza questo, un click destro
+        produrrebbe anche un click sinistro alla riapertura.
+        """
         cfg = self.config
         events = []
         if not cfg.enable_right_click:
             return events
+        if self.right_pinch.just_closed:
+            if self.state == _PENDING:
+                self.state = _IDLE
+            self._suppress_left = True
         if self.right_pinch.just_opened:
+            self._suppress_left = False
             if (self.hand_speed <= cfg.max_gesture_speed
                     and now - self.last_right_click_time >= cfg.right_click_cooldown):
                 events.append((RIGHT_CLICK, None))
@@ -606,6 +643,20 @@ class GestureRecognizer:
             self.frozen = True
             return True
 
+        # Finestra del doppio click: fra i due il cursore deve restare fermo,
+        # o il secondo click cade altrove e Windows non li accoppia. Il blocco
+        # cade appena la mano si sposta davvero, cosi' un click singolo non
+        # lascia il cursore incollato per mezzo secondo.
+        if (cfg.double_click_time > 0.0 and self.last_click_time > 0.0
+                and now - self.last_click_time < cfg.double_click_time
+                and self._tip is not None and self._click_tip is not None):
+            dx = self._tip[0] - self._click_tip[0]
+            dy = self._tip[1] - self._click_tip[1]
+            if (dx * dx + dy * dy) ** 0.5 <= cfg.double_click_hold_radius:
+                self._freeze_since = None
+                self.frozen = True
+                return True
+
         drop = cfg.pinch_approach_drop
         freeze = cfg.pinch_freeze_ratio
         approaching = self.left_pinch.approaching(freeze, drop)
@@ -642,3 +693,11 @@ class GestureRecognizer:
         if not self.left_pinch.armed:
             return "apri la mano"
         return "pronto"
+
+    def double_click_window(self, now=None):
+        """Secondi che restano per completare un doppio click, 0 se fuori."""
+        now = now if now is not None else self._now
+        if self.last_click_time <= 0.0:
+            return 0.0
+        left = self.config.double_click_time - (now - self.last_click_time)
+        return left if left > 0.0 else 0.0

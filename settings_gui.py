@@ -130,7 +130,7 @@ def _migrate(version):
 # caricato due test della macchina a stati falliscono: un PUGNO CHIUSO emette
 # drag_start, cioe' il tasto sinistro resta premuto invece di cliccare. E'
 # esattamente il sintomo "il click sinistro non funziona".
-# Nota sulle soglie di ESTENSIONE (index/middle_control_ratio): il limite e'
+# Nota sulla soglia di ESTENSIONE (index_control_ratio): il limite e'
 # volutamente larghissimo. La prima versione lo teneva fra 0.55 e 1.30,
 # copiando i valori di riferimento dei commenti del progetto, mai verificati su
 # una mano vera; la prima calibrazione reale ha misurato 0.31 e si e' vista
@@ -144,7 +144,6 @@ _LIMITS = {
     "right_pinch_open_ratio": (0.20, 1.20),
     "pinch_freeze_ratio": (0.25, 1.80),
     "index_control_ratio": (0.08, 1.60),
-    "middle_control_ratio": (0.08, 1.60),
 }
 
 
@@ -532,6 +531,11 @@ Movimento - punta dell'indice
   Il cursore segue la punta dell'indice. Non serve arrivare ai bordi
   dell'inquadratura: l'ampiezza si regola con i cursori "Ampiezza".
 
+Doppio click - due pinch pollice + indice ravvicinati
+  Ripeti il pinch entro la finestra del doppio click. Fra i due il cursore
+  resta BLOCCATO, altrimenti il secondo click cadrebbe altrove e Windows non
+  li accoppierebbe. Il blocco cade da solo appena sposti la mano.
+
 Click sinistro - pollice + indice, tocco breve
   Avvicina pollice e indice e riaprili subito. Appena il pinch inizia a
   chiudersi il cursore si BLOCCA, cosi' il click cade esattamente dove stavi
@@ -542,10 +546,16 @@ Drag - pollice + indice, tenuto
   resta premuto e il cursore torna a seguire la mano. Riapri le dita per
   rilasciare.
 
-Click destro - pollice + medio
-  Stesso principio del click sinistro, con il medio al posto dell'indice.
-  L'evento parte quando RIAPRI le dita, una volta sola: non si ripete anche se
-  tieni il gesto.
+Click destro - pollice + indice + medio, tutti e tre insieme
+  Avvicina indice E medio al pollice contemporaneamente. L'evento parte quando
+  RIAPRI le dita, una volta sola: non si ripete anche se tieni il gesto.
+
+  Era il solo pollice + medio, e su una mano vera non funziona: nella normale
+  posa di puntamento il pollice sta gia' appoggiato sul medio ripiegato, a una
+  distanza di 0.22 contro lo 0.12 del pinch fatto apposta. Sei centesimi di
+  margine sono dentro il rumore del tracciamento, quindi qualunque soglia li'
+  in mezzo o non scattava mai o scattava mentre puntavi. Con tre dita la posa
+  piu' vicina sta a 0.65: margine 0.45.
 
 Scroll - indice + medio estesi, anulare e mignolo chiusi
   Muovi la mano su e giu' per scorrere. La posa e' incompatibile con il pinch,

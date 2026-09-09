@@ -63,7 +63,7 @@ POSE_HANDS = {
     #                    indice  poll-ind  poll-medio  medio teso
     "pointing":     FakeHand(1.42, 1.30, 0.95, 0.30),
     "pinching":     FakeHand(1.06, 0.24, 0.80, 0.32),
-    "middle_pinch": FakeHand(1.35, 0.85, 0.20, 0.90),
+    "three_pinch": FakeHand(1.06, 0.22, 0.20, 0.84),
     "fist":         FakeHand(0.52, 0.34, 0.30, 0.22),
     "open":         FakeHand(1.45, 1.35, 1.40, 0.95),
 }
@@ -173,7 +173,7 @@ def test_overlapping_poses_are_rejected():
     drive(cal, hand_for=lambda key: {
         "pointing": FakeHand(1.42, 1.30, 0.95, 0.30),
         "pinching": FakeHand(0.60, 0.24, 0.80, 0.32),
-        "middle_pinch": FakeHand(1.35, 0.85, 0.20, 0.90),
+        "three_pinch": FakeHand(1.06, 0.22, 0.20, 0.84),
         "fist": FakeHand(0.62, 0.34, 0.30, 0.22),
         "open": FakeHand(1.45, 1.35, 1.40, 0.95),
     }[key])
@@ -181,35 +181,6 @@ def test_overlapping_poses_are_rejected():
           "risultato: %r" % cal.result)
     check("non propone una soglia di controllo sbagliata",
           "index_control_ratio" not in cal.result)
-
-
-def test_middle_control_ratio_is_calibrated():
-    """
-    Regressione: `middle_control_ratio` non veniva calibrato affatto.
-
-    Il parametro esisteva ed era usato dal riconoscitore per decidere se il
-    pinch pollice+medio conta come click destro, ma `compute` non lo produceva
-    mai: restava al valore di fabbrica. Se quel valore e' piu' alto di quanto
-    misura la mano vera, il click destro viene ignorato in silenzio — nessun
-    errore, nessun evento, niente.
-    """
-    cal = Calibration()
-    cal.start(1000.0)
-    drive(cal)
-    r = cal.result
-    check("calcola middle_control_ratio", "middle_control_ratio" in r,
-          "risultato: %r" % r)
-    if "middle_control_ratio" not in r:
-        return
-    ctrl = r["middle_control_ratio"]
-    check("il medio pinzato supera la soglia",
-          POSE_HANDS["middle_pinch"].middle_extension > ctrl,
-          "medio pinzato %.2f contro soglia %.2f"
-          % (POSE_HANDS["middle_pinch"].middle_extension, ctrl))
-    check("il pugno resta sotto la soglia",
-          POSE_HANDS["fist"].middle_extension < ctrl,
-          "pugno %.2f contro soglia %.2f"
-          % (POSE_HANDS["fist"].middle_extension, ctrl))
 
 
 def test_thresholds_survive_an_unusual_hand_scale():
@@ -227,7 +198,7 @@ def test_thresholds_survive_an_unusual_hand_scale():
     small = {
         "pointing":     FakeHand(0.88, 1.30, 0.95, 0.30),
         "pinching":     FakeHand(0.42, 0.24, 0.80, 0.32),
-        "middle_pinch": FakeHand(0.85, 0.85, 0.20, 0.55),
+        "three_pinch": FakeHand(0.85, 0.85, 0.20, 0.55),
         "fist":         FakeHand(0.25, 0.34, 0.30, 0.18),
         "open":         FakeHand(0.92, 1.35, 1.40, 0.62),
     }
@@ -247,45 +218,6 @@ def test_thresholds_survive_an_unusual_hand_scale():
               "pugno %.2f, soglia %.2f, pinch %.2f"
               % (small["fist"].index_extension, ctrl,
                  small["pinching"].index_extension))
-
-
-def test_curled_middle_is_reported_not_silently_accepted():
-    """
-    Regressione dal caso reale.
-
-    L'utente ha eseguito "pollice + medio" ripiegando il medio nel palmo e
-    toccandolo col pollice, invece di distenderlo verso il pollice. Misurato:
-    medio a 0.47 nella posa del click destro contro 0.46 puntando, cioe'
-    identici. Le due pose sono la stessa cosa e nessuna soglia le separa.
-
-    La calibrazione deve accorgersene e dirlo, non produrre un numero che
-    farebbe cliccare a destra ogni volta che punti.
-    """
-    curled = {
-        "pointing":     FakeHand(1.42, 1.30, 0.95, 0.46),
-        "pinching":     FakeHand(1.06, 0.24, 0.80, 0.84),
-        "middle_pinch": FakeHand(1.35, 0.85, 0.20, 0.47),   # medio ripiegato
-        "fist":         FakeHand(0.52, 0.34, 0.30, 0.32),
-        "open":         FakeHand(1.45, 1.35, 1.40, 0.94),
-    }
-    cal = Calibration()
-    cal.start(1000.0)
-    drive(cal, hand_for=lambda key: curled[key])
-    r = cal.result
-
-    check("segnala che il medio era ripiegato", "_middle_curled" in r,
-          "risultato: %r" % r)
-    ctrl = r.get("middle_control_ratio")
-    check("propone comunque una soglia sicura", ctrl is not None, "%r" % r)
-    if ctrl is not None:
-        check("la soglia esclude la posa di puntamento",
-              curled["pointing"].middle_extension < ctrl,
-              "puntamento %.2f contro soglia %.2f"
-              % (curled["pointing"].middle_extension, ctrl))
-        check("e lascia passare un medio davvero disteso",
-              curled["pinching"].middle_extension > ctrl,
-              "medio disteso %.2f contro soglia %.2f"
-              % (curled["pinching"].middle_extension, ctrl))
 
 
 def test_cancel_resets():
@@ -315,10 +247,13 @@ def test_recording_does_not_depend_on_key_repeat():
 
 def test_right_pinch_has_its_own_thresholds():
     """
-    Regressione: le soglie del click destro venivano COPIATE da quelle
-    dell'indice. Le due distanze non hanno niente a che vedere fra loro, e con
-    la soglia dell'indice il pinch destro risulta chiuso gia' nella posa di
-    puntamento: primo movimento della mano, click destro non richiesto.
+    Le soglie del click destro si misurano sulla loro posa.
+
+    Prima venivano COPIATE da quelle dell'indice, e le due grandezze non hanno
+    niente a che vedere fra loro. Poi si e' scoperto che nemmeno il solo
+    pollice-medio funziona: su una mano vera vale 0.22 nella posa di puntamento
+    contro 0.12 nel pinch voluto, margine dentro il rumore. Il click destro e'
+    ora un pinch a TRE dita, misurato come max(pollice-indice, pollice-medio).
     """
     cal = Calibration()
     cal.start(1000.0)
@@ -334,14 +269,15 @@ def test_right_pinch_has_its_own_thresholds():
           "entrambe %.2f" % r["right_pinch_close_ratio"])
     check("le soglie destre sono in ordine",
           r["right_pinch_close_ratio"] < r["right_pinch_open_ratio"], "%r" % r)
-    check("la posa di puntamento resta sopra la chiusura del pinch destro",
-          POSE_HANDS["pointing"]._middle > r["right_pinch_open_ratio"],
+    three = lambda h: max(h._pinch, h._middle)
+    check("la posa di puntamento resta sopra l'apertura",
+          three(POSE_HANDS["pointing"]) > r["right_pinch_open_ratio"],
           "puntamento %.2f contro apertura %.2f"
-          % (POSE_HANDS["pointing"]._middle, r["right_pinch_open_ratio"]))
-    check("il pinch medio sta sotto la chiusura",
-          POSE_HANDS["middle_pinch"]._middle < r["right_pinch_close_ratio"],
-          "pinch medio %.2f contro chiusura %.2f"
-          % (POSE_HANDS["middle_pinch"]._middle, r["right_pinch_close_ratio"]))
+          % (three(POSE_HANDS["pointing"]), r["right_pinch_open_ratio"]))
+    check("il pinch a tre dita sta sotto la chiusura",
+          three(POSE_HANDS["three_pinch"]) < r["right_pinch_close_ratio"],
+          "tre dita %.2f contro chiusura %.2f"
+          % (three(POSE_HANDS["three_pinch"]), r["right_pinch_close_ratio"]))
 
 
 def test_transition_frames_are_discarded():

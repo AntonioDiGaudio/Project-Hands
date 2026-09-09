@@ -46,9 +46,11 @@ def refresh_pose_constants():
     EXT_PINCHING = ctrl + 0.25    # indice piegato in punta per pinzare
     EXT_FIST = max(0.05, ctrl - 0.25)   # indice ripiegato sul palmo
 
-    mid = config.middle_control_ratio
-    MID_PINCHING = mid + 0.25     # medio teso che pinza col pollice
-    MID_FIST = max(0.05, mid - 0.25)
+    # Il medio non ha piu' una soglia sua: il click destro e' un pinch a tre
+    # dita, che si misura sulle distanze e non sull'estensione. Questi due
+    # restano solo per costruire pose sintetiche coerenti.
+    MID_PINCHING = ctrl + 0.25
+    MID_FIST = max(0.05, ctrl - 0.25)
 
 
 refresh_pose_constants()
@@ -174,13 +176,32 @@ def test_drag_survives_single_bad_frame():
 
 
 def test_right_click_fires_once_per_gesture():
+    """
+    Il click destro e' un pinch a TRE dita: pollice + indice + medio insieme.
+
+    Prima era il solo pollice+medio, e su una mano vera non si separa dalla
+    posa di puntamento: li' il pollice sta gia' appoggiato sul medio ripiegato
+    a 0.22 contro lo 0.12 del pinch voluto, margine dentro il rumore.
+    """
     r = GestureRecognizer(config)
     clock = Clock()
     settle(r, clock)
-    run(r, clock, make_hand(1.0, 0.2), frames=40)   # pinch medio tenuto a lungo
+    run(r, clock, make_hand(0.2, 0.2), frames=40)   # tre dita, tenuto a lungo
     events = run(r, clock, make_hand(1.0, 1.0), frames=6)
-    check("pinch pollice+medio produce esattamente un click destro",
+    check("il pinch a tre dita produce esattamente un click destro",
           events.count(RIGHT_CLICK) == 1, "eventi: %r" % events)
+    check("e non produce anche un click sinistro",
+          LEFT_CLICK not in events, "eventi: %r" % events)
+
+
+def test_thumb_middle_alone_does_nothing():
+    """Il vecchio gesto pollice+medio non deve piu' produrre eventi."""
+    r = GestureRecognizer(config)
+    clock = Clock()
+    settle(r, clock)
+    run(r, clock, make_hand(1.0, 0.2), frames=40)
+    events = run(r, clock, make_hand(1.0, 1.0), frames=6)
+    check("il solo pollice+medio non clicca", events == [], "eventi: %r" % events)
 
 
 def test_hysteresis_blocks_chatter():

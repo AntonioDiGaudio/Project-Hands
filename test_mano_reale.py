@@ -39,7 +39,10 @@ POSE = {
 # Come sopra, ma con il medio davvero disteso: e' il click destro fatto come
 # dice la guida. Il medio teso viene dalla posa "pollice + indice uniti", dove
 # la stessa mano lo tiene effettivamente esteso (0.84).
-POSE["pinch_medio_corretto"] = (0.93, 0.84, 0.74, 0.12, (1, 1, 1, 1))
+# Il click destro nuovo: pollice + indice + medio tutti insieme. Entrambe le
+# punte toccano il pollice, quindi tutte e due le distanze scendono al valore
+# che l'indice ha nel pinch semplice (0.14 misurato).
+POSE["tre_dita"] = (0.46, 0.47, 0.14, 0.16, (0, 0, 1, 1))
 
 FAILURES = []
 
@@ -52,11 +55,11 @@ def check(name, condition, detail=""):
         FAILURES.append(name)
 
 
-def hand(pose, reacquired=False):
+def hand(pose, reacquired=False, wrist=(0.5, 0.8)):
     """HandObservation che riproduce esattamente le distanze misurate."""
     idx_ext, mid_ext, thumb_index, thumb_middle, fingers = POSE[pose]
     pts = [(0.0, 0.0)] * 21
-    wx, wy = 0.5, 0.8
+    wx, wy = wrist
     pts[0] = (wx, wy)
     pts[9] = (wx, wy - SCALE)                 # nocca del medio -> scale
     pts[4] = (wx - 0.05, wy - SCALE * 0.8)    # pollice
@@ -160,30 +163,140 @@ def test_pointing_does_not_fire_right_click():
           RIGHT_CLICK not in events, "eventi: %r" % events)
 
 
-def test_right_click_with_extended_middle():
-    """Il click destro fatto come dice la guida: medio disteso."""
+def test_three_finger_pinch_right_clicks():
+    """Il click destro nuovo: pollice + indice + medio insieme."""
     r, clock = settled()
-    feed(r, clock, "aperta", frames=8)            # arma il rilevatore destro
-    feed(r, clock, "pinch_medio_corretto", frames=6)
-    events = feed(r, clock, "aperta", frames=8)
-    check("con il medio disteso il click destro parte",
+    feed(r, clock, "puntamento", frames=5)
+    feed(r, clock, "tre_dita", frames=6)
+    events = feed(r, clock, "puntamento", frames=8)
+    check("il pinch a tre dita produce un click destro",
           events.count(RIGHT_CLICK) == 1, "eventi: %r" % events)
 
 
-def test_curled_middle_pinch_is_ignored():
+def test_three_finger_pinch_does_not_also_left_click():
     """
-    Il click destro fatto col medio ripiegato viene ignorato, e deve esserlo.
+    Chiudendo tre dita l'indice tocca il pollice per primo, quindi il
+    rilevatore sinistro si chiude comunque. Non deve uscirne anche un click
+    sinistro.
+    """
+    r, clock = settled()
+    feed(r, clock, "puntamento", frames=5)
+    feed(r, clock, "tre_dita", frames=6)
+    events = feed(r, clock, "puntamento", frames=8)
+    check("il click destro non porta con se' un click sinistro",
+          LEFT_CLICK not in events, "eventi: %r" % events)
 
-    Su questa mano quella posa e' indistinguibile dal puntamento: il medio
-    misura 0.47 in entrambe. Accettarla significherebbe cliccare a destra
-    ogni volta che si punta.
+
+def test_thumb_middle_alone_is_not_a_right_click():
+    """
+    Il vecchio gesto pollice+medio non deve piu' fare niente.
+
+    Su questa mano non era separabile dal puntamento: pollice-medio vale 0.22
+    puntando contro 0.12 nel pinch, margine dentro il rumore del tracciamento.
     """
     r, clock = settled()
     feed(r, clock, "aperta", frames=8)
     feed(r, clock, "pinch_medio", frames=6)
     events = feed(r, clock, "aperta", frames=8)
-    check("il pinch medio col medio ripiegato non clicca",
+    check("il solo pollice+medio non clicca a destra",
           RIGHT_CLICK not in events, "eventi: %r" % events)
+
+
+def test_pointing_never_right_clicks():
+    """Il puntamento ha gia' il pollice sul medio: non deve mai cliccare."""
+    r, clock = settled()
+    events = feed(r, clock, "puntamento", frames=90)
+    events += feed(r, clock, "aperta", frames=20)
+    events += feed(r, clock, "puntamento", frames=30)
+    check("puntando non parte mai un click destro",
+          RIGHT_CLICK not in events, "eventi: %r" % events)
+
+
+def test_double_click():
+    """
+    Due pinch ravvicinati devono produrre due click, non uno.
+
+    Il secondo esce alla CHIUSURA del secondo pinch: aspettare la riapertura
+    costava i fotogrammi di conferma del rilascio e faceva sforare i 500 ms
+    che Windows concede fra i due click.
+    """
+    r, clock = settled()
+    feed(r, clock, "puntamento", frames=5)
+    events = feed(r, clock, "pinch_indice", frames=5)
+    events += feed(r, clock, "puntamento", frames=5)
+    events += feed(r, clock, "pinch_indice", frames=5)
+    events += feed(r, clock, "puntamento", frames=8)
+    check("due pinch ravvicinati danno due click",
+          events.count(LEFT_CLICK) == 2, "eventi: %r" % events)
+
+
+def test_double_click_fits_the_system_window():
+    """I due click devono stare dentro la finestra di Windows (500 ms)."""
+    r, clock = settled()
+    feed(r, clock, "puntamento", frames=5)
+    times = []
+    start = clock.t
+    for pose, n in (("pinch_indice", 5), ("puntamento", 5),
+                    ("pinch_indice", 5), ("puntamento", 8)):
+        for _ in range(n):
+            h = hand(pose)
+            now = clock.advance()
+            r.prepare(h, now)
+            for name, _p in r.update(h, (960, 540), now):
+                if name == LEFT_CLICK:
+                    times.append(now)
+    check("escono due click", len(times) == 2, "istanti: %r" % times)
+    if len(times) == 2:
+        gap = times[1] - times[0]
+        check("i due click stanno dentro 0.5 s", gap <= 0.5,
+              "intervallo %.3f s" % gap)
+
+
+def test_cursor_stays_still_between_the_two_clicks():
+    """
+    Fra i due click il cursore deve restare fermo.
+
+    Se si sposta, il secondo click cade altrove e Windows non li accoppia: e'
+    il motivo per cui il doppio click "spostava il puntatore".
+    """
+    r, clock = settled()
+    feed(r, clock, "puntamento", frames=5)
+    feed(r, clock, "pinch_indice", frames=5)
+    feed(r, clock, "puntamento", frames=4)
+    frozen = 0
+    for _ in range(8):
+        h = hand("puntamento")
+        now = clock.advance()
+        r.prepare(h, now)
+        if r.cursor_frozen():
+            frozen += 1
+        r.update(h, (960, 540), now)
+    check("il cursore resta bloccato nella finestra del doppio click",
+          frozen == 8, "congelato %d/8" % frozen)
+
+
+def test_single_click_releases_the_cursor_when_the_hand_moves():
+    """
+    Ma il blocco deve cadere subito se la mano si sposta davvero, altrimenti
+    ogni click singolo lascerebbe il cursore incollato per mezzo secondo.
+    """
+    r, clock = settled()
+    feed(r, clock, "puntamento", frames=5)
+    feed(r, clock, "pinch_indice", frames=5)
+    # 4 fotogrammi: pinch_release_frames e' 3, quindi qui il click e' gia'
+    # uscito e siamo dentro la finestra del doppio click.
+    feed(r, clock, "puntamento", frames=4)
+    # Stessa posa, ma la mano si e' spostata nell'inquadratura.
+    frozen = 0
+    for _ in range(6):
+        h = hand("puntamento", wrist=(0.75, 0.5))
+        now = clock.advance()
+        r.prepare(h, now)
+        if r.cursor_frozen():
+            frozen += 1
+        r.update(h, (960, 540), now)
+    check("muovendo la mano il cursore si libera subito", frozen == 0,
+          "congelato %d/6" % frozen)
 
 
 def test_cursor_free_while_pointing():
@@ -211,9 +324,9 @@ def test_cursor_freezes_when_starting_a_pinch():
 
 
 def _run_all():
-    print("soglie attive: indice >=%.2f | medio >=%.2f | pinch <%.2f / >%.2f\n"
-          % (config.index_control_ratio, config.middle_control_ratio,
-             config.pinch_close_ratio, config.pinch_open_ratio))
+    print("soglie attive: indice >=%.2f | pinch <%.2f / >%.2f | tre dita <%.2f\n"
+          % (config.index_control_ratio, config.pinch_close_ratio,
+             config.pinch_open_ratio, config.right_pinch_close_ratio))
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:
         print(test.__name__)
