@@ -30,10 +30,21 @@ def check(name, condition, detail=""):
 
 
 class FakeHand:
-    """Mano sintetica con misure controllate."""
+    """
+    Mano sintetica con misure controllate.
 
-    def __init__(self, extension, pinch, middle=1.2):
+    I numeri qui sotto sono arbitrari di proposito, e vanno letti come tali. Le
+    soglie di estensione delle dita non hanno una scala assoluta prevedibile:
+    dipendono dalle proporzioni della mano vera. Questi test verificano che
+    `compute` ricavi le soglie NELLA POSIZIONE GIUSTA rispetto alle pose
+    misurate, non che una certa mano dia un certo numero. E' la distinzione che
+    prima mancava: i valori di riferimento erano scritti nei commenti e mai
+    verificati, e le soglie di fabbrica ci si appoggiavano.
+    """
+
+    def __init__(self, extension, pinch, middle=1.2, middle_extension=0.30):
         self.index_extension = extension
+        self.middle_extension = middle_extension
         self._pinch = pinch
         self._middle = middle
 
@@ -49,10 +60,11 @@ class FakeHand:
 # medio. Le due geometrie non coincidono: qui pointing ha 0.95 e middle_pinch
 # 0.20, mentre sull'indice gli stessi due valori sono 1.30 e 0.24.
 POSE_HANDS = {
-    "pointing": FakeHand(1.42, 1.30, 0.95),
-    "pinching": FakeHand(1.06, 0.24, 0.80),
-    "middle_pinch": FakeHand(1.35, 0.85, 0.20),
-    "fist": FakeHand(0.52, 0.34, 0.30),
+    #                    indice  poll-ind  poll-medio  medio teso
+    "pointing":     FakeHand(1.42, 1.30, 0.95, 0.30),
+    "pinching":     FakeHand(1.06, 0.24, 0.80, 0.32),
+    "middle_pinch": FakeHand(1.35, 0.85, 0.20, 0.90),
+    "fist":         FakeHand(0.52, 0.34, 0.30, 0.22),
 }
 
 
@@ -158,15 +170,80 @@ def test_overlapping_poses_are_rejected():
     cal.start(1000.0)
     # Pugno e pinch con la stessa estensione: non separabili.
     drive(cal, hand_for=lambda key: {
-        "pointing": FakeHand(1.42, 1.30, 0.95),
-        "pinching": FakeHand(0.60, 0.24, 0.80),
-        "middle_pinch": FakeHand(1.35, 0.85, 0.20),
-        "fist": FakeHand(0.62, 0.34, 0.30),
+        "pointing": FakeHand(1.42, 1.30, 0.95, 0.30),
+        "pinching": FakeHand(0.60, 0.24, 0.80, 0.32),
+        "middle_pinch": FakeHand(1.35, 0.85, 0.20, 0.90),
+        "fist": FakeHand(0.62, 0.34, 0.30, 0.22),
     }[key])
     check("segnala la sovrapposizione", "_overlap" in cal.result,
           "risultato: %r" % cal.result)
     check("non propone una soglia di controllo sbagliata",
           "index_control_ratio" not in cal.result)
+
+
+def test_middle_control_ratio_is_calibrated():
+    """
+    Regressione: `middle_control_ratio` non veniva calibrato affatto.
+
+    Il parametro esisteva ed era usato dal riconoscitore per decidere se il
+    pinch pollice+medio conta come click destro, ma `compute` non lo produceva
+    mai: restava al valore di fabbrica. Se quel valore e' piu' alto di quanto
+    misura la mano vera, il click destro viene ignorato in silenzio — nessun
+    errore, nessun evento, niente.
+    """
+    cal = Calibration()
+    cal.start(1000.0)
+    drive(cal)
+    r = cal.result
+    check("calcola middle_control_ratio", "middle_control_ratio" in r,
+          "risultato: %r" % r)
+    if "middle_control_ratio" not in r:
+        return
+    ctrl = r["middle_control_ratio"]
+    check("il medio pinzato supera la soglia",
+          POSE_HANDS["middle_pinch"].middle_extension > ctrl,
+          "medio pinzato %.2f contro soglia %.2f"
+          % (POSE_HANDS["middle_pinch"].middle_extension, ctrl))
+    check("il pugno resta sotto la soglia",
+          POSE_HANDS["fist"].middle_extension < ctrl,
+          "pugno %.2f contro soglia %.2f"
+          % (POSE_HANDS["fist"].middle_extension, ctrl))
+
+
+def test_thresholds_survive_an_unusual_hand_scale():
+    """
+    Una mano le cui estensioni stanno su una scala diversa deve calibrarsi
+    lo stesso.
+
+    E' il caso che ha rotto tutto in pratica. I limiti di plausibilita' erano
+    stati scritti copiando i valori di riferimento dei commenti ("indice teso
+    ~1.3-1.5"); una mano reale ne ha misurati circa un quarto e la calibrazione
+    si e' vista rifiutare valori corretti, restando su un default che blocca
+    ogni gesture. La soglia non ha una scala assoluta: conta solo che stia fra
+    pugno e pinch.
+    """
+    small = {
+        "pointing":     FakeHand(0.88, 1.30, 0.95, 0.30),
+        "pinching":     FakeHand(0.42, 0.24, 0.80, 0.32),
+        "middle_pinch": FakeHand(0.85, 0.85, 0.20, 0.55),
+        "fist":         FakeHand(0.25, 0.34, 0.30, 0.18),
+    }
+    cal = Calibration()
+    cal.start(1000.0)
+    drive(cal, hand_for=lambda key: small[key])
+    r = cal.result
+
+    check("la soglia viene comunque prodotta", "index_control_ratio" in r,
+          "risultato: %r (scartati: %r)" % (r, r.get("_rifiutati")))
+    check("nessun valore corretto viene rifiutato", "_rifiutati" not in r,
+          "scartati: %r" % r.get("_rifiutati"))
+    if "index_control_ratio" in r:
+        ctrl = r["index_control_ratio"]
+        check("sta fra pugno e pinch",
+              small["fist"].index_extension < ctrl < small["pinching"].index_extension,
+              "pugno %.2f, soglia %.2f, pinch %.2f"
+              % (small["fist"].index_extension, ctrl,
+                 small["pinching"].index_extension))
 
 
 def test_cancel_resets():

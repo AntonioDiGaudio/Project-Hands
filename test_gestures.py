@@ -26,9 +26,32 @@ SCALE = 0.15  # dimensione mano in unita' normalizzate
 # falso "tutto a posto": il fixture teneva l'indice sempre esteso durante il
 # pinch, mentre nella realta' pinzare l'indice lo piega. La macchina a stati
 # bloccava quindi ogni click e i test non se ne accorgevano.
-EXT_POINTING = 1.40   # indice teso
-EXT_PINCHING = 1.05   # indice piegato in punta per pinzare
-EXT_FIST = 0.50       # indice ripiegato sul palmo
+#
+# Sono RELATIVI alla soglia di controllo attiva, non assoluti, ed e' una
+# correzione importante. Prima erano numeri fissi (1.40 / 1.05 / 0.50) copiati
+# dai commenti del progetto, dove non erano mai stati verificati su una mano
+# vera: la prima calibrazione reale ha misurato circa un quarto di quei valori.
+# Con costanti fisse i test passano qualunque cosa dica `index_control_ratio`,
+# quindi non si accorgono di una soglia che nella pratica blocca ogni gesture.
+# Definendoli come distanza DALLA soglia, i test esercitano il margine.
+EXT_POINTING = EXT_PINCHING = EXT_FIST = 0.0
+MID_PINCHING = MID_FIST = 0.0
+
+
+def refresh_pose_constants():
+    """Riallinea le costanti di posa alle soglie di configurazione attive."""
+    global EXT_POINTING, EXT_PINCHING, EXT_FIST, MID_PINCHING, MID_FIST
+    ctrl = config.index_control_ratio
+    EXT_POINTING = ctrl + 0.55    # indice ben teso
+    EXT_PINCHING = ctrl + 0.25    # indice piegato in punta per pinzare
+    EXT_FIST = max(0.05, ctrl - 0.25)   # indice ripiegato sul palmo
+
+    mid = config.middle_control_ratio
+    MID_PINCHING = mid + 0.25     # medio teso che pinza col pollice
+    MID_FIST = max(0.05, mid - 0.25)
+
+
+refresh_pose_constants()
 
 
 def make_hand(index_pinch=1.0, middle_pinch=1.0, fingers=(1, 0, 0, 0),
@@ -46,7 +69,7 @@ def make_hand(index_pinch=1.0, middle_pinch=1.0, fingers=(1, 0, 0, 0),
     if index_extension is None:
         index_extension = EXT_PINCHING if index_pinch < 0.7 else EXT_POINTING
     if middle_extension is None:
-        middle_extension = EXT_PINCHING if middle_pinch < 0.7 else EXT_POINTING
+        middle_extension = MID_PINCHING if middle_pinch < 0.7 else MID_PINCHING + 0.3
 
     pts = [(0.0, 0.0)] * 21
     wx, wy = wrist
@@ -365,7 +388,7 @@ def test_pointing_pose_does_not_freeze_the_cursor():
     frozen = 0
     for _ in range(120):
         hand = make_hand(1.05, 0.35, fingers=(1, 0, 0, 0),
-                          middle_extension=EXT_FIST)
+                          middle_extension=MID_FIST)
         now = clock.advance(1 / 30)
         r.prepare(hand, now)
         if r.cursor_frozen():
@@ -386,7 +409,7 @@ def test_pointing_pose_does_not_fire_right_click():
     clock = Clock()
     settle(r, clock)
     run(r, clock, make_hand(1.05, 0.35, fingers=(1, 0, 0, 0),
-                          middle_extension=EXT_FIST), frames=60)
+                          middle_extension=MID_FIST), frames=60)
     events = run(r, clock, make_hand(1.05, 1.30, fingers=(1, 1, 1, 1)), frames=30)
     check("aprire la mano dopo aver puntato non clicca a destra",
           RIGHT_CLICK not in events, "eventi: %r" % events)
@@ -464,6 +487,9 @@ def test_scroll_is_expressed_in_wheel_notches():
 
 
 def _run_all():
+    # Le costanti di posa seguono le soglie attive, che nel secondo giro sono
+    # quelle del profilo salvato e non quelle di fabbrica.
+    refresh_pose_constants()
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:
         print(test.__name__)

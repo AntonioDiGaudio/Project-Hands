@@ -130,13 +130,21 @@ def _migrate(version):
 # caricato due test della macchina a stati falliscono: un PUGNO CHIUSO emette
 # drag_start, cioe' il tasto sinistro resta premuto invece di cliccare. E'
 # esattamente il sintomo "il click sinistro non funziona".
+# Nota sulle soglie di ESTENSIONE (index/middle_control_ratio): il limite e'
+# volutamente larghissimo. La prima versione lo teneva fra 0.55 e 1.30,
+# copiando i valori di riferimento dei commenti del progetto, mai verificati su
+# una mano vera; la prima calibrazione reale ha misurato 0.31 e si e' vista
+# rifiutare un valore corretto, restando quindi su un default che blocca ogni
+# gesture. Quelle soglie non hanno una scala assoluta prevedibile: dipendono
+# dalle proporzioni della mano. Qui si scartano solo i valori impossibili.
 _LIMITS = {
-    "pinch_close_ratio": (0.15, 0.60),
-    "pinch_open_ratio": (0.25, 0.95),
-    "right_pinch_close_ratio": (0.15, 0.60),
-    "right_pinch_open_ratio": (0.25, 0.95),
-    "pinch_freeze_ratio": (0.40, 1.60),
-    "index_control_ratio": (0.55, 1.30),
+    "pinch_close_ratio": (0.10, 0.60),
+    "pinch_open_ratio": (0.20, 1.20),
+    "right_pinch_close_ratio": (0.10, 0.60),
+    "right_pinch_open_ratio": (0.20, 1.20),
+    "pinch_freeze_ratio": (0.25, 1.80),
+    "index_control_ratio": (0.08, 1.60),
+    "middle_control_ratio": (0.08, 1.60),
 }
 
 

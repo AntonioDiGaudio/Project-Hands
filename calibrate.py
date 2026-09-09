@@ -52,13 +52,29 @@ MIN_SAMPLES = 12  # sotto questa soglia la posa non e' utilizzabile
 
 # Limiti di plausibilita', gli stessi che settings_gui applica al caricamento.
 # Meglio rifiutare qui che scrivere un profilo che poi viene scartato.
+#
+# Sono volutamente LARGHI sulle soglie di estensione delle dita. La prima
+# versione di questi limiti metteva `index_control_ratio` fra 0.55 e 1.30,
+# copiando i valori di riferimento scritti nei commenti del progetto ("indice
+# teso ~1.3-1.5") — numeri mai verificati su una mano vera. La prima
+# calibrazione reale su questa macchina ha misurato 0.31, cioe' quattro volte
+# meno: il limite non proteggeva da niente e impediva alla calibrazione di
+# salvare un valore corretto. Una soglia di controllo non ha una scala
+# assoluta prevedibile, perche' dipende dalle proporzioni della mano; quello
+# che conta e' che stia FRA pugno e pinch, e a garantirlo e' gia' `compute`.
+#
+# Sui rapporti di pinch il limite invece serve, ed e' verificato: un pinch e'
+# "due punte che si toccano", quindi la loro distanza e' una piccola frazione
+# della mano. Un profilo che dichiarava 0.82 descriveva una mano aperta, e con
+# quello caricato un pugno chiuso emetteva drag_start.
 SANE = {
-    "pinch_close_ratio": (0.15, 0.60),
-    "pinch_open_ratio": (0.25, 0.95),
-    "right_pinch_close_ratio": (0.15, 0.60),
-    "right_pinch_open_ratio": (0.25, 0.95),
-    "pinch_freeze_ratio": (0.40, 1.60),
-    "index_control_ratio": (0.55, 1.30),
+    "pinch_close_ratio": (0.10, 0.60),
+    "pinch_open_ratio": (0.20, 1.20),
+    "right_pinch_close_ratio": (0.10, 0.60),
+    "right_pinch_open_ratio": (0.20, 1.20),
+    "pinch_freeze_ratio": (0.25, 1.80),
+    "index_control_ratio": (0.08, 1.60),
+    "middle_control_ratio": (0.08, 1.60),
 }
 
 # Stati della procedura.
@@ -69,15 +85,17 @@ class Samples:
     """Raccoglie le misure di una posa."""
 
     def __init__(self):
-        self.extension = []
-        self.pinch = []
-        self.middle_pinch = []
+        self.extension = []          # quanto e' disteso l'INDICE
+        self.middle_extension = []   # quanto e' disteso il MEDIO
+        self.pinch = []              # distanza pollice-indice
+        self.middle_pinch = []       # distanza pollice-medio
 
     def add(self, hand, settled=True):
         """`settled` False mentre la mano si sta ancora portando nella posa."""
         if not settled:
             return
         self.extension.append(hand.index_extension)
+        self.middle_extension.append(hand.middle_extension)
         self.pinch.append(hand.ratio(THUMB_TIP, INDEX_TIP))
         self.middle_pinch.append(hand.ratio(THUMB_TIP, MIDDLE_TIP))
 
@@ -144,6 +162,19 @@ def compute(samples):
             out["_margin"] = round(pinch_low - fist_high, 2)
         else:
             out["_overlap"] = (round(fist_high, 2), round(pinch_low, 2))
+
+    # Stessa costruzione per il medio, che prima non veniva calibrato affatto:
+    # `middle_control_ratio` esisteva come parametro ma restava al valore di
+    # fabbrica, e se quel valore e' troppo alto il click destro e' ignorato in
+    # silenzio. Il riferimento "disteso" e' il medio mentre pinza col pollice,
+    # perche' e' esattamente la posa in cui il click destro deve funzionare.
+    if enough(middle) and enough(fist):
+        m_low = Samples.span(middle.middle_extension)[0]
+        f_high = Samples.span(fist.middle_extension)[2]
+        if m_low > f_high:
+            out["middle_control_ratio"] = round((m_low + f_high) / 2, 2)
+        else:
+            out["_middle_control_overlap"] = (round(f_high, 2), round(m_low, 2))
 
     if enough(pointing) and enough(pinching):
         open_low = Samples.span(pointing.pinch)[0]
@@ -470,6 +501,10 @@ def _save(cal):
         print("\n  Mano aperta e pinch si sovrappongono (%.2f contro %.2f)."
               % values["_pinch_overlap"])
         print("  Separa di piu' pollice e indice nella posa a indice puntato.")
+    if "_middle_control_overlap" in values:
+        print("\n  Medio pinzato e pugno si sovrappongono (%.2f contro %.2f):"
+              " middle_control_ratio non calcolato."
+              % values["_middle_control_overlap"])
     if "_right_overlap" in values:
         print("\n  Pollice+medio uniti e posa di puntamento si sovrappongono "
               "(%.2f contro %.2f)." % values["_right_overlap"])
