@@ -134,6 +134,8 @@ class MouseController:
 
         self.last_pos = None          # ultima posizione effettivamente applicata
         self.target_pos = None        # ultima posizione filtrata (anche se congelata)
+        self._was_frozen = False
+        self._settle = None           # (dx, dy, istante di fine) dopo un blocco
         self.drag_active = False
         self.last_zoom_ratio = None
         self.zoom_cooldown = 0.0
@@ -186,7 +188,33 @@ class MouseController:
         if frozen:
             # Il filtro continua ad aggiornarsi (cosi' non c'e' uno scatto alla
             # ripresa) ma il cursore resta dove sta.
+            self._was_frozen = True
             return self.last_pos if self.last_pos else (fx, fy)
+
+        # Fine del congelamento. Il cursore era fermo, la mano no: la posizione
+        # vera adesso e' altrove, e applicarla di colpo fa SALTARE il cursore.
+        #
+        # Il caso che si vede e' l'inizio di un drag: li' il congelamento
+        # finisce a tasto gia' premuto, quindi il salto trascina davvero quello
+        # che stai afferrando. Invece di saltare si riassorbe lo scarto in
+        # `cursor_settle_time`, che a schermo si legge come un piccolo
+        # scivolamento invece che come uno scatto.
+        if self._was_frozen:
+            self._was_frozen = False
+            if self.last_pos is not None:
+                span = max(1e-3, float(getattr(cfg, "cursor_settle_time", 0.35)))
+                self._settle = (self.last_pos[0] - fx, self.last_pos[1] - fy,
+                                now + span, span)
+
+        if self._settle is not None:
+            dx, dy, until, span = self._settle
+            left = until - now
+            if left <= 0.0:
+                self._settle = None
+            else:
+                k = left / span      # 1 -> 0
+                fx += dx * k
+                fy += dy * k
 
         if self.last_pos is not None:
             if (abs(fx - self.last_pos[0]) < cfg.deadzone_threshold
@@ -204,6 +232,8 @@ class MouseController:
     def reset_cursor_filter(self):
         self.filter_x.reset()
         self.filter_y.reset()
+        self._was_frozen = False
+        self._settle = None
 
     # -- eventi ------------------------------------------------------------
     def left_click(self):

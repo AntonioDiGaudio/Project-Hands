@@ -382,13 +382,14 @@ class AirMouseApp:
             "pinch sx %.2f (soglia %.2f)%s" % (
                 g.left_ratio, config.pinch_close_ratio,
                 "" if g.left_pinch.armed else "  DISARMATO"),
-            "pinch dx %.2f (soglia %.2f)%s" % (
-                g.right_ratio, config.right_pinch_close_ratio,
-                "" if g.middle_pointing else "  medio chiuso"),
-            "indice %.2f  medio %.2f  (soglie %.2f / %.2f)" % (
-                g.index_extension, g.middle_extension,
-                config.index_control_ratio, config.middle_control_ratio),
-            "cursore: %s" % ("BLOCCATO" if g.frozen else "libero"),
+            "tre dita %.2f (soglia %.2f)  poll-medio %.2f" % (
+                g.right_ratio, config.right_pinch_close_ratio, g.middle_ratio),
+            "indice teso %.2f (soglia %.2f)" % (
+                g.index_extension, config.index_control_ratio),
+            "cursore: %s%s" % (
+                "BLOCCATO" if g.frozen else "libero",
+                "   2o click entro %.2fs" % g.double_click_window()
+                if g.double_click_window() > 0 else ""),
             "velocita' %.0f px/s (max %.0f)" % (g.hand_speed, config.max_gesture_speed),
             "mani tracciate: %d%s" % (
                 self.hand_tracker.max_num_hands,

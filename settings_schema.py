@@ -44,15 +44,10 @@ SECTIONS = [
               "Quanto devi riaprire le dita per chiudere il gesto. Deve restare "
               "piu' alto della chiusura: la distanza fra i due valori e' quello "
               "che impedisce lo sfarfallio."),
-        Param("right_pinch_close_ratio", "Chiusura pinch (click dx)", "float", 0.20, 0.80, 0.01,
+        Param("right_pinch_close_ratio", "Chiusura pinch a tre dita", "float", 0.20, 0.80, 0.01,
               "Come sopra ma per pollice+medio, che fa il click destro."),
-        Param("right_pinch_open_ratio", "Apertura pinch (click dx)", "float", 0.30, 1.20, 0.01,
+        Param("right_pinch_open_ratio", "Apertura pinch a tre dita", "float", 0.30, 1.20, 0.01,
               "Apertura del pinch del click destro."),
-        Param("middle_control_ratio", "Soglia medio disteso/chiuso", "float", 0.40, 1.30, 0.05,
-              "Quanto deve essere disteso il MEDIO perche' il pinch pollice+medio "
-              "conti come click destro. Da ripiegato nel palmo, col pollice "
-              "appoggiato sopra, le due punte sono gia' vicine: senza questa "
-              "soglia la normale posa di puntamento e' un click destro."),
         Param("pinch_approach_drop", "Sensibilita' blocco cursore", "float", 0.05, 0.60, 0.01,
               "Di quanto devono essersi avvicinate le dita perche' il cursore si "
               "blocchi. Il blocco richiede un avvicinamento IN CORSO: senza "
@@ -67,7 +62,7 @@ SECTIONS = [
               "piu' in la'. Deve restare PIU' ALTA della chiusura del pinch: e' "
               "il margine in cui il cursore si ferma mentre le dita si stanno "
               "ancora avvicinando. Se il cursore ti scivola mentre clicchi, alza."),
-        Param("index_control_ratio", "Soglia mano aperta/chiusa", "float", 0.40, 1.30, 0.05,
+        Param("index_control_ratio", "Soglia mano aperta/chiusa", "float", 0.10, 1.60, 0.01,
               "Quanto deve essere disteso l'indice perche' la mano conti come "
               "attiva, misurato dalla nocca. Sotto questo valore la mano e' "
               "considerata chiusa e nulla puo' succedere. ATTENZIONE: pinzare "

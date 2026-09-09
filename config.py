@@ -19,6 +19,13 @@ overscan_y = 1.6
 cursor_speed_multiplier = 1.0
 deadzone_threshold = 2.0         # px schermo: sotto questo delta il cursore non si muove
 
+# Quanto ci mette il cursore a riassorbire lo scarto accumulato durante un
+# congelamento. Mentre e' congelato il cursore resta fermo ma la mano no: alla
+# ripresa la posizione vera e' altrove, e senza questo il cursore ci SALTA.
+# Si vedeva soprattutto all'inizio di un drag, dove il salto avviene a tasto
+# gia' premuto e trascina quello che stai afferrando.
+cursor_settle_time = 0.35
+
 # Filtro One Euro: e' il filtro che decide fluidita' vs latenza.
 #   min_cutoff piu' basso  -> piu' stabile da fermo, piu' molle in movimento
 #   beta       piu' alto   -> segue meglio i movimenti veloci
@@ -36,7 +43,23 @@ alpha_smooth = 0.4
 pinch_close_ratio = 0.45         # sotto  -> pinch chiuso
 pinch_open_ratio = 0.70          # sopra  -> pinch aperto (isteresi Schmitt)
 
-# Pinch pollice+medio = click destro.
+# Click destro = pinch a TRE DITA: pollice + indice + medio tutti insieme.
+# La grandezza misurata e' max(pollice-indice, pollice-medio), cioe' "la piu'
+# lontana delle due punte": va sotto soglia solo quando entrambe toccano.
+#
+# Prima era il solo pollice+medio, e su una mano vera non funziona. Misurato:
+# nella posa di puntamento il pollice sta gia' appoggiato sul medio ripiegato a
+# 0.22, contro lo 0.12 del pinch fatto apposta. Margine 0.06, dentro il rumore
+# del tracciamento: qualunque soglia li' in mezzo o non scatta mai o scatta
+# mentre punti. Con max() le pose che arrivano al riconoscitore stanno tutte
+# sopra 0.65 e il pinch a tre dita sta intorno a 0.20: margine 0.45.
+#
+#     posa            max(poll-indice, poll-medio)
+#     puntamento              1.18 - 1.22
+#     mano aperta             1.27 - 1.31
+#     pinch pollice+indice    0.96 - 1.00
+#     pollice+medio           0.65 - 0.82
+#     pinch a tre dita        ~0.20
 right_pinch_close_ratio = 0.45
 right_pinch_open_ratio = 0.70
 
@@ -50,28 +73,76 @@ click_max_travel = 45.0          # px schermo: se il cursore vaga di piu', non e
 click_cooldown = 0.25
 right_click_cooldown = 0.45
 
+# Doppio click: due pinch ravvicinati.
+#
+# Non era implementato affatto, e non bastava "cliccare due volte in fretta":
+# `click_cooldown` scartava il secondo click, e ogni ciclo di pinch costa
+# comunque pinch_confirm_frames + pinch_release_frames di sola conferma (5
+# fotogrammi, circa 170 ms a 30 fps). Due cicli completi non stavano dentro i
+# 500 ms che Windows concede (GetDoubleClickTime).
+#
+# Ora il secondo click viene emesso alla CHIUSURA del secondo pinch invece che
+# alla riapertura: si risparmiano i fotogrammi di conferma del rilascio, e il
+# cooldown non si applica dentro la finestra. Al sistema arrivano due click
+# normali alla stessa posizione, che e' esattamente quello che manda un mouse
+# vero: e' Windows a interpretarli come doppio click.
+# Il valore e' 0.40, non 0.50, e il margine serve. La finestra viene misurata
+# dall'emissione del primo click al CONTATTO del secondo pinch, mentre a
+# Windows il secondo click arriva `pinch_confirm_frames` piu' tardi (2
+# fotogrammi, circa 0.07 s a 30 fps). Con 0.45 il caso peggiore diventa 0.52 e
+# sfora i 500 ms di GetDoubleClickTime; con 0.40 resta 0.47.
+double_click_time = 0.40         # s: 0 disattiva il doppio click
+
+# Fra i due click il cursore resta fermo, altrimenti il secondo cade altrove e
+# il doppio click non viene riconosciuto. Il blocco cade subito se la mano si
+# sposta piu' di questa frazione di inquadratura: cosi' un click singolo non
+# lascia il cursore incollato.
+double_click_hold_radius = 0.035
+
 # ---------------------------------------------------------------------------
 # Anti falsi positivi
 # ---------------------------------------------------------------------------
 require_pointing_pose = True     # nessuna gesture se la mano non e' in posa di controllo
 
 # Soglia della posa di controllo, misurata come distanza punta-nocca
-# dell'indice divisa per la dimensione della mano.
+# dell'indice divisa per la dimensione della mano (polso -> nocca del medio).
 #
-#     indice teso      ~1.3 - 1.5
-#     indice che pinza ~0.9 - 1.2
-#     pugno chiuso     ~0.4 - 0.6
+# I valori qui sotto sono MISURATI su una mano vera con `diagnose.py`, non
+# stimati. Mediane per posa:
 #
-# La soglia va nel mezzo fra pinch e pugno: deve lasciar passare il pinch
-# (altrimenti il click si annulla da solo mentre lo fai) e fermare il pugno.
-# Usa `python calibrate.py` per leggere i valori reali della tua mano.
-index_control_ratio = 0.75
+#     posa                  indice   medio   poll-indice  poll-medio
+#     indice puntato          0.93    0.46       1.19         0.22
+#     pollice+indice uniti    0.46    0.84       0.14         0.98
+#     pollice+medio uniti     0.73    0.47       0.74         0.12
+#     pugno chiuso            0.27    0.32       0.20         0.28
+#     mano ben aperta         0.79    0.94       0.96         1.29
+#
+# I commenti precedenti dichiaravano "indice teso ~1.3-1.5, pinch ~0.9-1.2,
+# pugno ~0.4-0.6", e non erano mai stati verificati. La misura dice 0.93 / 0.46
+# / 0.27: un fattore 1.6 di distanza, e soprattutto una scala diversa. Il
+# rapporto e' lunghezza dell'indice diviso lunghezza del palmo, che
+# anatomicamente sta intorno a 0.8-0.9 a dito teso — non poteva valere 1.4.
+#
+# Il default che ne discendeva, 0.75, coincideva col valore dell'indice TESO:
+# passava solo a dito perfettamente dritto e falliva appena lo pieghi per
+# pinzare, che e' esattamente il momento del click. Risultato: `gated_reason`
+# diventava "mano chiusa" durante ogni click e non partiva mai niente, mentre
+# il cursore continuava a muoversi perche' non passa da quel gate.
+#
+# La soglia va nel mezzo fra pinch (0.46) e pugno (0.27): deve lasciar passare
+# il pinch e fermare il pugno. Usa `python calibrate.py` per i valori della tua
+# mano, e `python diagnose.py` se una gesture non parte e non capisci perche'.
+index_control_ratio = 0.38
 
-# La stessa soglia per il medio, usata dal click destro. Il pinch pollice+medio
-# viene proprio ignorato se il medio non e' disteso: da ripiegato nel palmo, col
-# pollice appoggiato sopra, la distanza pollice-medio vale gia' circa 0.35 e
-# sarebbe indistinguibile da un pinch fatto apposta.
-middle_control_ratio = 0.75
+# NOTA: `middle_control_ratio` e' stato rimosso. Era un tentativo di salvare il
+# click destro pollice+medio chiedendo che il medio fosse DISTESO, ed era lo
+# stesso errore appena corretto sull'indice, rifatto sul medio. Misurato su una
+# mano vera: un medio che pinza col pollice sta a 0.47, un medio ripiegato nel
+# palmo a 0.46. Non e' esecuzione sbagliata — un dito piegato per toccare il
+# pollice e' geometricamente quasi identico a un dito piegato nel palmo, e
+# infatti l'indice fa lo stesso (0.93 teso, 0.46 mentre pinza). Quella soglia
+# non separava niente e bloccava anche la posa corretta. Il click destro ora e'
+# un pinch a tre dita, che si separa da solo.
 
 # Il cursore si congela quando il pinch scende sotto questa soglia. Va tenuta
 # piu' alta di pinch_open_ratio: cosi' il blocco scatta gia' durante
