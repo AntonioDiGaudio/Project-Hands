@@ -8,7 +8,7 @@ mano e da come la tieni davanti alla webcam. Valori scelti a tavolino possono
 sembrare corretti e non esserlo.
 
 Come funziona: premi SPAZIO una volta sola e il programma ti guida attraverso
-quattro pose, con un conto alla rovescia per ciascuna, registrando da solo. La
+cinque pose, con un conto alla rovescia per ciascuna, registrando da solo. La
 registrazione di ogni posa comincia dopo `SETTLE` secondi, cosi' i fotogrammi
 in cui la mano si sta ancora portando nella posa non finiscono nelle soglie.
 
@@ -36,9 +36,17 @@ _POLL_KEY = hasattr(cv2, "pollKey")
 SEQUENCE = [
     ("pointing", "INDICE PUNTATO", "indice ben teso, pollice staccato"),
     ("pinching", "POLLICE + INDICE UNITI", "il gesto del click, tienilo fermo"),
-    ("middle_pinch", "POLLICE + MEDIO UNITI", "il gesto del click destro"),
+    ("middle_pinch", "POLLICE + MEDIO UNITI",
+     "MEDIO DISTESO che va incontro al pollice, non ripiegato nel palmo"),
     ("fist", "PUGNO CHIUSO", "tutte le dita ripiegate sul palmo"),
+    ("open", "MANO BEN APERTA", "tutte e cinque le dita larghe"),
 ]
+
+# Quanto deve essere separato il medio disteso da quello ripiegato perche' la
+# soglia sia affidabile. Misurato su una mano vera: puntando il medio sta a
+# 0.46 e la stessa mano lo tiene a 0.84 quando e' davvero disteso, quindi un
+# margine di 0.15 e' prudente ma raggiungibile.
+MIN_MIDDLE_MARGIN = 0.15
 
 COUNTDOWN = 2.5   # secondi di preparazione prima di ogni posa
 CAPTURE = 2.5     # secondi di registrazione
@@ -151,6 +159,7 @@ def compute(samples):
     pinching = samples.get("pinching")
     middle = samples.get("middle_pinch")
     fist = samples.get("fist")
+    open_hand = samples.get("open")
 
     enough = lambda s: s is not None and len(s) >= MIN_SAMPLES
 
@@ -163,18 +172,32 @@ def compute(samples):
         else:
             out["_overlap"] = (round(fist_high, 2), round(pinch_low, 2))
 
-    # Stessa costruzione per il medio, che prima non veniva calibrato affatto:
-    # `middle_control_ratio` esisteva come parametro ma restava al valore di
-    # fabbrica, e se quel valore e' troppo alto il click destro e' ignorato in
-    # silenzio. Il riferimento "disteso" e' il medio mentre pinza col pollice,
-    # perche' e' esattamente la posa in cui il click destro deve funzionare.
-    if enough(middle) and enough(fist):
-        m_low = Samples.span(middle.middle_extension)[0]
-        f_high = Samples.span(fist.middle_extension)[2]
-        if m_low > f_high:
-            out["middle_control_ratio"] = round((m_low + f_high) / 2, 2)
+    # Soglia del medio disteso. Il confronto che conta NON e' col pugno ma con
+    # la posa di PUNTAMENTO, perche' e' li' che un falso positivo fa danno: se
+    # il medio ripiegato passa la soglia, la posa di puntamento diventa un
+    # pinch medio e si clicca a destra puntando.
+    #
+    # Serve anche a intercettare un errore di esecuzione che altrimenti passa
+    # inosservato. Su una mano vera, misurato: nella posa "pollice + medio" il
+    # medio stava a 0.47 e puntando a 0.46, cioe' IDENTICI — il medio era stato
+    # ripiegato nel palmo e toccato col pollice invece di andargli incontro
+    # disteso. Cosi' le due pose sono la stessa cosa e nessuna soglia le separa:
+    # meglio dirlo che salvare un numero che non puo' funzionare.
+    if enough(middle) and enough(pointing):
+        curled = Samples.span(pointing.middle_extension)[2]
+        pinched = Samples.span(middle.middle_extension)[0]
+        if pinched > curled + MIN_MIDDLE_MARGIN:
+            out["middle_control_ratio"] = round((pinched + curled) / 2, 2)
         else:
-            out["_middle_control_overlap"] = (round(f_high, 2), round(m_low, 2))
+            out["_middle_curled"] = (round(curled, 2), round(pinched, 2))
+            # Ripiego prudente: una soglia presa sulla mano aperta blocca
+            # comunque il puntamento, quindi non genera click destri falsi.
+            # Il click destro restera' difficile da fare finche' la posa non
+            # viene eseguita col medio disteso, ma almeno non spara da solo.
+            if enough(open_hand):
+                wide = Samples.span(open_hand.middle_extension)[0]
+                if wide > curled + MIN_MIDDLE_MARGIN:
+                    out["middle_control_ratio"] = round((curled + wide) / 2, 2)
 
     if enough(pointing) and enough(pinching):
         open_low = Samples.span(pointing.pinch)[0]
@@ -192,17 +215,25 @@ def compute(samples):
         else:
             out["_pinch_overlap"] = (round(pinch_high, 2), round(open_low, 2))
 
-    if enough(pointing) and enough(middle):
-        # Riferimento della posa "aperta" per il medio: il medio della posa di
-        # puntamento, che e' proprio la configurazione in cui non si deve
-        # cliccare a destra.
-        open_low = Samples.span(pointing.middle_pinch)[0]
-        closed_high = Samples.span(middle.middle_pinch)[2]
-        right = _thresholds(open_low, closed_high, "right_pinch")
-        if right:
-            out.update(right)
-        else:
-            out["_right_overlap"] = (round(closed_high, 2), round(open_low, 2))
+    if enough(middle):
+        # Riferimento "aperto" per il pollice-medio: la MANO APERTA, non la posa
+        # di puntamento.
+        #
+        # Sembrerebbe piu' naturale usare il puntamento, ed e' quello che
+        # facevo. Non funziona: su una mano vera il pollice sta appoggiato sul
+        # medio ripiegato gia' mentre punta, quindi pollice-medio vale 0.22
+        # contro lo 0.15 del pinch — un margine di 0.06, dentro il rumore. La
+        # posa di puntamento e' comunque esclusa a monte da
+        # `middle_control_ratio`, quindi non serve che sia lei il riferimento.
+        reference = open_hand if enough(open_hand) else pointing
+        if enough(reference):
+            open_low = Samples.span(reference.middle_pinch)[0]
+            closed_high = Samples.span(middle.middle_pinch)[2]
+            right = _thresholds(open_low, closed_high, "right_pinch")
+            if right:
+                out.update(right)
+            else:
+                out["_right_overlap"] = (round(closed_high, 2), round(open_low, 2))
 
     # Le soglie devono restare in ordine, altrimenti l'isteresi si inverte e le
     # gesture sfarfallano. Meglio accorgersene qui che in uso.
@@ -501,10 +532,14 @@ def _save(cal):
         print("\n  Mano aperta e pinch si sovrappongono (%.2f contro %.2f)."
               % values["_pinch_overlap"])
         print("  Separa di piu' pollice e indice nella posa a indice puntato.")
-    if "_middle_control_overlap" in values:
-        print("\n  Medio pinzato e pugno si sovrappongono (%.2f contro %.2f):"
-              " middle_control_ratio non calcolato."
-              % values["_middle_control_overlap"])
+    if "_middle_curled" in values:
+        curled, pinched = values["_middle_curled"]
+        print("\n  Nella posa 'pollice + medio' il medio era RIPIEGATO: misura"
+              " %.2f contro il %.2f che ha puntando." % (pinched, curled))
+        print("  Cosi' quella posa e' indistinguibile dal puntamento, e il click"
+              " destro non puo' funzionare senza cliccare anche quando punti.")
+        print("  Rifai la posa tenendo il MEDIO DISTESO, che va incontro al"
+              " pollice invece di ripiegarsi nel palmo.")
     if "_right_overlap" in values:
         print("\n  Pollice+medio uniti e posa di puntamento si sovrappongono "
               "(%.2f contro %.2f)." % values["_right_overlap"])

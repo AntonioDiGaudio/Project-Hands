@@ -65,6 +65,7 @@ POSE_HANDS = {
     "pinching":     FakeHand(1.06, 0.24, 0.80, 0.32),
     "middle_pinch": FakeHand(1.35, 0.85, 0.20, 0.90),
     "fist":         FakeHand(0.52, 0.34, 0.30, 0.22),
+    "open":         FakeHand(1.45, 1.35, 1.40, 0.95),
 }
 
 
@@ -174,6 +175,7 @@ def test_overlapping_poses_are_rejected():
         "pinching": FakeHand(0.60, 0.24, 0.80, 0.32),
         "middle_pinch": FakeHand(1.35, 0.85, 0.20, 0.90),
         "fist": FakeHand(0.62, 0.34, 0.30, 0.22),
+        "open": FakeHand(1.45, 1.35, 1.40, 0.95),
     }[key])
     check("segnala la sovrapposizione", "_overlap" in cal.result,
           "risultato: %r" % cal.result)
@@ -227,6 +229,7 @@ def test_thresholds_survive_an_unusual_hand_scale():
         "pinching":     FakeHand(0.42, 0.24, 0.80, 0.32),
         "middle_pinch": FakeHand(0.85, 0.85, 0.20, 0.55),
         "fist":         FakeHand(0.25, 0.34, 0.30, 0.18),
+        "open":         FakeHand(0.92, 1.35, 1.40, 0.62),
     }
     cal = Calibration()
     cal.start(1000.0)
@@ -244,6 +247,45 @@ def test_thresholds_survive_an_unusual_hand_scale():
               "pugno %.2f, soglia %.2f, pinch %.2f"
               % (small["fist"].index_extension, ctrl,
                  small["pinching"].index_extension))
+
+
+def test_curled_middle_is_reported_not_silently_accepted():
+    """
+    Regressione dal caso reale.
+
+    L'utente ha eseguito "pollice + medio" ripiegando il medio nel palmo e
+    toccandolo col pollice, invece di distenderlo verso il pollice. Misurato:
+    medio a 0.47 nella posa del click destro contro 0.46 puntando, cioe'
+    identici. Le due pose sono la stessa cosa e nessuna soglia le separa.
+
+    La calibrazione deve accorgersene e dirlo, non produrre un numero che
+    farebbe cliccare a destra ogni volta che punti.
+    """
+    curled = {
+        "pointing":     FakeHand(1.42, 1.30, 0.95, 0.46),
+        "pinching":     FakeHand(1.06, 0.24, 0.80, 0.84),
+        "middle_pinch": FakeHand(1.35, 0.85, 0.20, 0.47),   # medio ripiegato
+        "fist":         FakeHand(0.52, 0.34, 0.30, 0.32),
+        "open":         FakeHand(1.45, 1.35, 1.40, 0.94),
+    }
+    cal = Calibration()
+    cal.start(1000.0)
+    drive(cal, hand_for=lambda key: curled[key])
+    r = cal.result
+
+    check("segnala che il medio era ripiegato", "_middle_curled" in r,
+          "risultato: %r" % r)
+    ctrl = r.get("middle_control_ratio")
+    check("propone comunque una soglia sicura", ctrl is not None, "%r" % r)
+    if ctrl is not None:
+        check("la soglia esclude la posa di puntamento",
+              curled["pointing"].middle_extension < ctrl,
+              "puntamento %.2f contro soglia %.2f"
+              % (curled["pointing"].middle_extension, ctrl))
+        check("e lascia passare un medio davvero disteso",
+              curled["pinching"].middle_extension > ctrl,
+              "medio disteso %.2f contro soglia %.2f"
+              % (curled["pinching"].middle_extension, ctrl))
 
 
 def test_cancel_resets():

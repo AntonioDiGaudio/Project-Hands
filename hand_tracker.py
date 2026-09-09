@@ -62,11 +62,18 @@ class HandObservation:
 
         # Quanto e' disteso l'indice, misurato dalla NOCCA e non dal polso.
         #
-        # Serve a distinguere tre pose che il conteggio dita da solo confonde:
+        # Serve a distinguere tre pose che il conteggio dita da solo confonde.
+        # Valori MISURATI su una mano vera con `diagnose.py` (mediane):
         #
-        #     indice teso      ~1.3 - 1.5
-        #     indice che pinza ~0.9 - 1.2   (piegato in punta verso il pollice)
-        #     pugno chiuso     ~0.4 - 0.6   (ripiegato sul palmo)
+        #     indice teso      0.93
+        #     indice che pinza 0.46   (piegato in punta verso il pollice)
+        #     pugno chiuso     0.27   (ripiegato sul palmo)
+        #
+        # Questi commenti dichiaravano prima 1.3-1.5 / 0.9-1.2 / 0.4-0.6, mai
+        # verificati, e le soglie di fabbrica ci si appoggiavano: il default
+        # coincideva col valore a dito teso e bloccava ogni click. La grandezza
+        # e' lunghezza dell'indice diviso lunghezza del palmo, che a dito teso
+        # sta intorno a 0.8-0.9: non poteva valere 1.4.
         #
         # La misura basata sul polso non va bene qui: quando pinzi, la punta
         # dell'indice scende verso il pollice e finisce piu' vicina al polso
@@ -80,8 +87,8 @@ class HandObservation:
         # Il click destro e' "pollice + medio uniti", ma la sola distanza fra
         # le due punte non basta a riconoscerlo: nella normale posa di
         # puntamento il medio e' ripiegato nel palmo e il pollice gli si
-        # appoggia sopra, quindi quella distanza vale gia' circa 0.35 della
-        # mano, cioe' meno della soglia di chiusura. Senza sapere se il medio
+        # appoggia sopra, quindi quella distanza vale gia' 0.22 (misurato)
+        # contro lo 0.12 del pinch vero — un margine dentro il rumore. Senza sapere se il medio
         # e' DISTESO, la posa di puntamento e' indistinguibile da un pinch
         # medio: il cursore si congela e al primo movimento parte un click
         # destro non richiesto.

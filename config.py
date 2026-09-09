@@ -56,22 +56,45 @@ right_click_cooldown = 0.45
 require_pointing_pose = True     # nessuna gesture se la mano non e' in posa di controllo
 
 # Soglia della posa di controllo, misurata come distanza punta-nocca
-# dell'indice divisa per la dimensione della mano.
+# dell'indice divisa per la dimensione della mano (polso -> nocca del medio).
 #
-#     indice teso      ~1.3 - 1.5
-#     indice che pinza ~0.9 - 1.2
-#     pugno chiuso     ~0.4 - 0.6
+# I valori qui sotto sono MISURATI su una mano vera con `diagnose.py`, non
+# stimati. Mediane per posa:
 #
-# La soglia va nel mezzo fra pinch e pugno: deve lasciar passare il pinch
-# (altrimenti il click si annulla da solo mentre lo fai) e fermare il pugno.
-# Usa `python calibrate.py` per leggere i valori reali della tua mano.
-index_control_ratio = 0.75
+#     posa                  indice   medio   poll-indice  poll-medio
+#     indice puntato          0.93    0.46       1.19         0.22
+#     pollice+indice uniti    0.46    0.84       0.14         0.98
+#     pollice+medio uniti     0.73    0.47       0.74         0.12
+#     pugno chiuso            0.27    0.32       0.20         0.28
+#     mano ben aperta         0.79    0.94       0.96         1.29
+#
+# I commenti precedenti dichiaravano "indice teso ~1.3-1.5, pinch ~0.9-1.2,
+# pugno ~0.4-0.6", e non erano mai stati verificati. La misura dice 0.93 / 0.46
+# / 0.27: un fattore 1.6 di distanza, e soprattutto una scala diversa. Il
+# rapporto e' lunghezza dell'indice diviso lunghezza del palmo, che
+# anatomicamente sta intorno a 0.8-0.9 a dito teso — non poteva valere 1.4.
+#
+# Il default che ne discendeva, 0.75, coincideva col valore dell'indice TESO:
+# passava solo a dito perfettamente dritto e falliva appena lo pieghi per
+# pinzare, che e' esattamente il momento del click. Risultato: `gated_reason`
+# diventava "mano chiusa" durante ogni click e non partiva mai niente, mentre
+# il cursore continuava a muoversi perche' non passa da quel gate.
+#
+# La soglia va nel mezzo fra pinch (0.46) e pugno (0.27): deve lasciar passare
+# il pinch e fermare il pugno. Usa `python calibrate.py` per i valori della tua
+# mano, e `python diagnose.py` se una gesture non parte e non capisci perche'.
+index_control_ratio = 0.38
 
 # La stessa soglia per il medio, usata dal click destro. Il pinch pollice+medio
 # viene proprio ignorato se il medio non e' disteso: da ripiegato nel palmo, col
-# pollice appoggiato sopra, la distanza pollice-medio vale gia' circa 0.35 e
-# sarebbe indistinguibile da un pinch fatto apposta.
-middle_control_ratio = 0.75
+# pollice appoggiato sopra, la distanza pollice-medio vale gia' circa 0.22
+# (misurata) e sarebbe indistinguibile da un pinch fatto apposta.
+#
+# Sta fra il medio ripiegato della posa di puntamento (0.46) e il medio
+# davvero disteso (0.84). Il click destro va quindi fatto col MEDIO DISTESO che
+# va incontro al pollice: ripiegandolo nel palmo e toccandolo col pollice la
+# posa e' identica al puntamento e nessuna soglia puo' separarle.
+middle_control_ratio = 0.65
 
 # Il cursore si congela quando il pinch scende sotto questa soglia. Va tenuta
 # piu' alta di pinch_open_ratio: cosi' il blocco scatta gia' durante

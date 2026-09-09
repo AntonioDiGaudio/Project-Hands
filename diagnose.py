@@ -29,6 +29,7 @@ import config
 import settings_gui  # applica Profiles/settings.txt, cosi' si diagnostica il vero
 from gesture_recognizer import GestureRecognizer
 from hand_tracker import HandTracker, THUMB_TIP, INDEX_TIP, MIDDLE_TIP
+from mouse_controller import MouseController
 from webcam_manager import WebcamManager
 
 WINDOW = "AirMouse - diagnosi"
@@ -52,6 +53,9 @@ POSES = [
 
 # Fase finale a ruota libera: si prova a usare il programma davvero.
 FREE_SECONDS = 20.0
+
+# Fase a due mani, per lo zoom.
+ZOOM_SECONDS = 12.0
 
 
 def pct(values, q):
@@ -105,6 +109,36 @@ class Recording:
                 counts[i] += f[i]
         n = len(self.fingers)
         return "".join("^" if c > n / 2 else "_" for c in counts)
+
+
+class Zoom:
+    """
+    Lo zoom a due mani, che ha condizioni tutte sue.
+
+    Non passa dal gate della posa di controllo, quindi puo' fallire per motivi
+    completamente diversi dai click: la seconda mano non viene rilevata, oppure
+    MediaPipe assegna a entrambe la stessa lateralita' e una delle due viene
+    scartata, oppure la posa (indici estesi, medi chiusi) non e' riconosciuta.
+    Qui si contano i tre casi separatamente, cosi' si sa quale.
+    """
+
+    def __init__(self):
+        self.frames = 0
+        self.two_hands = 0
+        self.same_label = 0
+        self.pose_ok = 0
+        self.events = 0
+        self.ratios = []
+
+    def add(self, hands, pose_ok, fired, ratio):
+        self.frames += 1
+        right, left = hands.get("Right"), hands.get("Left")
+        if right is not None and left is not None:
+            self.two_hands += 1
+        self.pose_ok += int(pose_ok)
+        self.events += int(fired)
+        if ratio is not None:
+            self.ratios.append(ratio)
 
 
 class Free:
@@ -213,6 +247,15 @@ def main():
 
     recordings = {}
     free = Free()
+    zoom = Zoom()
+
+    # Controller vero, ma con la rotellina intercettata: qui non si tocca
+    # niente del sistema, si conta solo se lo zoom SAREBBE partito.
+    import mouse_controller
+    mouse_controller._wheel = lambda n: None
+    mouse_controller.pyautogui.keyDown = lambda k: None
+    mouse_controller.pyautogui.keyUp = lambda k: None
+    mouse = MouseController(config)
     poll = hasattr(cv2, "pollKey")
 
     step = 0
@@ -287,6 +330,33 @@ def main():
                 if hand is not None:
                     free.add(gestures, hand, frozen, events, now)
                 if elapsed >= FREE_SECONDS:
+                    state = "zoom"
+                    phase_start = now
+                    tracker.reconfigure(max_num_hands=2)
+            elif state == "zoom":
+                elapsed = now - phase_start
+                banner(frame, "ZOOM: DUE MANI  (%.0f s)" % max(0, ZOOM_SECONDS - elapsed),
+                       "solo gli indici estesi, allontana e avvicina le mani",
+                       (200, 160, 255))
+                progress(frame, elapsed / ZOOM_SECONDS, (200, 160, 255))
+
+                a, b = hands.get("Right"), hands.get("Left")
+                pose_ok = (a is not None and b is not None
+                           and a.fingers[0] and b.fingers[0]
+                           and not a.fingers[1] and not b.fingers[1])
+                ratio = None
+                fired = False
+                if pose_ok:
+                    ax, ay = a.point(INDEX_TIP)
+                    bx, by = b.point(INDEX_TIP)
+                    scale = (a.scale + b.scale) * 0.5
+                    ratio = (((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                             / max(scale, 1e-6))
+                    fired, _ = mouse.handle_zoom(ratio, True, now)
+                else:
+                    mouse.handle_zoom(0.0, False, now)
+                zoom.add(hands, pose_ok, fired, ratio)
+                if elapsed >= ZOOM_SECONDS:
                     break
 
             for key, title, _ in POSES:
@@ -319,12 +389,12 @@ def main():
         tracker.close()
         cv2.destroyAllWindows()
 
-    write_report(recordings, free)
+    write_report(recordings, free, zoom)
     return 0
 
 
 # ---------------------------------------------------------------------------
-def write_report(recordings, free):
+def write_report(recordings, free, zoom=None):
     out = io.StringIO()
     w = out.write
 
@@ -385,9 +455,24 @@ def write_report(recordings, free):
         for name, (lo, mid, hi) in free.rec.summary().items():
             w("    %-16s %5.2f  %5.2f  %5.2f\n" % (name, lo, mid, hi))
 
+    if zoom is not None and zoom.frames:
+        n = float(zoom.frames)
+        w("\n\nFase zoom (due mani)\n")
+        w("=" * 70 + "\n")
+        w("  fotogrammi               : %d\n" % zoom.frames)
+        w("  due mani rilevate        : %d  (%.0f%%)\n"
+          % (zoom.two_hands, 100 * zoom.two_hands / n))
+        w("  posa di zoom valida      : %d  (%.0f%%)\n"
+          % (zoom.pose_ok, 100 * zoom.pose_ok / n))
+        w("  zoom che sarebbero partiti: %d\n" % zoom.events)
+        if zoom.ratios:
+            w("  distanza fra gli indici  : %.2f / %.2f / %.2f\n"
+              % (pct(zoom.ratios, 0.05), pct(zoom.ratios, 0.50),
+                 pct(zoom.ratios, 0.95)))
+
     w("\n\nLettura automatica\n")
     w("=" * 70 + "\n")
-    for line in verdict(recordings, free):
+    for line in verdict(recordings, free, zoom):
         w("  %s\n" % line)
 
     text = out.getvalue()
@@ -397,7 +482,7 @@ def write_report(recordings, free):
     print("Report scritto in %s" % os.path.abspath(REPORT))
 
 
-def verdict(recordings, free):
+def verdict(recordings, free, zoom=None):
     """Confronta le misure con le soglie e dice quale soglia non torna."""
     lines = []
     point = recordings.get("puntamento")
@@ -485,6 +570,30 @@ def verdict(recordings, free):
                          "dei fotogrammi." % (100 * free.frozen / n))
         if not free.events:
             lines.append("Nella prova non e' stato emesso NESSUN evento.")
+
+    # 5. Lo zoom, che ha cause di guasto tutte sue.
+    if zoom is not None and zoom.frames:
+        n = float(zoom.frames)
+        if zoom.two_hands / n < 0.3:
+            lines.append(
+                "ZOOM: le due mani sono state viste insieme solo nel %.0f%% dei "
+                "fotogrammi. Senza seconda mano lo zoom non puo' partire: "
+                "tienile entrambe ben dentro l'inquadratura e separate."
+                % (100 * zoom.two_hands / n))
+        elif zoom.pose_ok / n < 0.3:
+            lines.append(
+                "ZOOM: le due mani si vedono (%.0f%%) ma la posa vale solo nel "
+                "%.0f%% dei fotogrammi. Serve SOLO l'indice esteso su entrambe: "
+                "il medio deve restare chiuso."
+                % (100 * zoom.two_hands / n, 100 * zoom.pose_ok / n))
+        elif zoom.events == 0:
+            lines.append(
+                "ZOOM: posa riconosciuta ma nessuno scatto. Muovi le mani di "
+                "piu', oppure abbassa zoom_trigger_ratio (ora %.2f): serve una "
+                "variazione di quella frazione della distanza fra gli indici."
+                % config.zoom_trigger_ratio)
+        else:
+            lines.append("ZOOM: funziona, %d scatti nella prova." % zoom.events)
 
     if not lines:
         lines.append("Nessuna anomalia evidente nelle soglie: le misure stanno "
