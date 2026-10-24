@@ -3,6 +3,10 @@
 Controllo del mouse tramite i gesti della mano rilevati da una webcam, con
 MediaPipe e OpenCV.
 
+<p align="center">
+  <img src="docs/brag.gif" alt="AirMouse: pannello impostazioni, calibrazione guidata e controllo del cursore (dimostrazione illustrativa)" width="480">
+</p>
+
 ## Installazione
 
 ```bash
